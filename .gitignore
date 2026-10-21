@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets — keep .env.example for hosts
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+service-account.json
+*-firebase-adminsdk*.json
+credentials.json
+
+# Runtime uploads
+uploads/*
+!uploads/.gitkeep
+
+# Logs and debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Hosting / local cache
+.vercel
+.vercel/
+coverage/
+.nyc_output/
+tmp/
+temp/
