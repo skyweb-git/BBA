@@ -261,6 +261,19 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  const requestId = String(req.headers['x-request-id'] || `srv-${startedAt.toString(36)}`);
+  res.setHeader('X-Request-Id', requestId);
+  res.on('finish', () => {
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= 400 || res.statusCode >= 400) {
+      const route = String(req.originalUrl || req.url || '').split('?')[0];
+      console.log(`[perf] ${req.method} ${route} ${res.statusCode} ${durationMs}ms id=${requestId}`);
+    }
+  });
+  next();
+});
 
 // Session Middleware
 app.use(session({
@@ -299,7 +312,11 @@ if (process.env.NODE_ENV === 'production' && (!mongoDatabaseName || mongoDatabas
 if (!mongoDatabaseName) {
   console.warn('[MongoDB] MONGODB_URI has no database name; MongoDB will use its default "test" database.');
 }
-mongoose.connect(mongoURI)
+mongoose.connect(mongoURI, {
+  maxPoolSize: 20,
+  minPoolSize: 2,
+  serverSelectionTimeoutMS: 8000,
+})
   .then(() => {
     console.log('Connected to MongoDB successfully');
     // NOTE: seedDatabase() intentionally removed — it deleted real user content on every restart.
@@ -504,6 +521,7 @@ UserSchema.index(
   { radioFrequency: 1 },
   { unique: true, partialFilterExpression: { radioFrequency: { $type: 'string' } } }
 );
+UserSchema.index({ createdAt: -1 });
 const User = mongoose.model('User', UserSchema);
 
 const isProfileCompleted = (user) => {
@@ -581,6 +599,13 @@ const normalizeUsername = (value) => String(value ?? '')
 const isValidUsername = (username) => /^[a-z0-9_]{3,30}$/.test(username);
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const parsePageLimit = (query = {}, defaultLimit = 50, maxLimit = 100) => {
+  const requested = Number.parseInt(query.limit, 10);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), maxLimit) : defaultLimit;
+  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+  return { limit, page, skip: (page - 1) * limit };
+};
 
 const isUsernameAvailable = async (username, excludeUserId = null) => {
   const normalized = normalizeUsername(username);
@@ -664,6 +689,79 @@ const normalizeRadioFrequency = (value) => {
   const numeric = Number(frequency);
   return numeric >= 100 && numeric <= 199.9 ? numeric.toFixed(1) : null;
 };
+const assignUniqueRadioFrequency = async (userId) => {
+  const [users, channels] = await Promise.all([
+    User.find({ radioFrequency: { $type: 'string' } }).select('radioFrequency').lean(),
+    RadioChannel.find({}).select('frequency').lean(),
+  ]);
+  const taken = new Set();
+  for (const row of users) {
+    const freq = normalizeRadioFrequency(row.radioFrequency);
+    if (freq) taken.add(freq);
+  }
+  for (const row of channels) {
+    const freq = normalizeRadioFrequency(row.frequency);
+    if (freq) taken.add(freq);
+  }
+  const hex = String(userId).replace(/[^a-fA-F0-9]/g, '').slice(-6) || '0';
+  const parsed = parseInt(hex, 16);
+  let slot = Number.isFinite(parsed) ? parsed % 1000 : 0;
+  for (let step = 0; step < 1000; step += 1) {
+    const frequency = (100 + ((slot + step) % 1000) / 10).toFixed(1);
+    if (!taken.has(frequency)) return frequency;
+  }
+  return null;
+};
+
+const repairRadioFrequencyCollisions = async () => {
+  const users = await User.find({ radioFrequency: { $type: 'string' } })
+    .sort({ createdAt: 1 })
+    .select('_id radioFrequency');
+  const ownerByFrequency = new Map();
+  for (const user of users) {
+    const current = normalizeRadioFrequency(user.radioFrequency);
+    const takenByOther = current && ownerByFrequency.get(current) && ownerByFrequency.get(current) !== String(user._id);
+    if (!current || takenByOther) {
+      const next = await assignUniqueRadioFrequency(user._id);
+      if (!next) continue;
+      user.radioFrequency = next;
+      user.radioEnabled = true;
+      await user.save();
+      ownerByFrequency.set(next, String(user._id));
+      const owned = await RadioChannel.findOne({ ownerId: user._id });
+      if (owned && owned.frequency !== next) {
+        owned.frequency = next;
+        await owned.save().catch(async () => {
+          await RadioChannel.deleteOne({ _id: owned._id });
+        });
+      }
+      console.log(`[Radio] Moved ${user._id} off a shared frequency onto ${next}`);
+      continue;
+    }
+    if (user.radioFrequency !== current) {
+      user.radioFrequency = current;
+      await user.save();
+    }
+    ownerByFrequency.set(current, String(user._id));
+  }
+
+  const channels = await RadioChannel.find({});
+  const seenFreq = new Set();
+  for (const channel of channels) {
+    const freq = normalizeRadioFrequency(channel.frequency);
+    const rightful = freq && ownerByFrequency.get(freq);
+    if (!freq || rightful !== String(channel.ownerId) || seenFreq.has(freq)) {
+      await RadioChannel.deleteOne({ _id: channel._id });
+      continue;
+    }
+    if (channel.frequency !== freq) {
+      channel.frequency = freq;
+      await channel.save();
+    }
+    seenFreq.add(freq);
+  }
+};
+
 const getRadioListenerCount = (frequency) => radioPresence.get(frequency)?.size || 0;
 const emitRadioListenerCount = (frequency) => {
   io.to(radioRoomName(frequency)).emit('radio:listener-count', {
@@ -693,6 +791,7 @@ const clearRadioListeners = (frequency) => {
 // live flags on process startup because an in-memory media session cannot survive it.
 const radioIndexesReady = mongoose.connection.asPromise()
   .then(async () => {
+    await repairRadioFrequencyCollisions();
     await Promise.all([
       User.collection.createIndex(
         { radioFrequency: 1 },
@@ -744,7 +843,7 @@ const authenticateRadioUser = async (req, res, next) => {
 
 const formatRadioChannel = async (channel) => {
   if (!channel) return null;
-  const owner = await User.findById(channel.ownerId).select('displayName username avatarUrl');
+  const owner = await User.findById(channel.ownerId).select('displayName username avatarUrl').lean();
   return {
     id: String(channel._id),
     ownerId: String(channel.ownerId),
@@ -757,6 +856,29 @@ const formatRadioChannel = async (channel) => {
     startedAt: channel.startedAt,
     listenerCount: getRadioListenerCount(channel.frequency),
   };
+};
+
+const formatRadioChannels = async (channels = []) => {
+  const ids = [...new Set(channels.map((channel) => String(channel.ownerId || '')).filter(Boolean))];
+  const owners = ids.length
+    ? await User.find({ _id: { $in: ids } }).select('displayName username avatarUrl').lean()
+    : [];
+  const byId = new Map(owners.map((user) => [String(user._id), user]));
+  return channels.map((channel) => {
+    const owner = byId.get(String(channel.ownerId));
+    return {
+      id: String(channel._id),
+      ownerId: String(channel.ownerId),
+      displayName: owner?.displayName || owner?.username || 'Artwave artist',
+      username: owner?.username || '',
+      avatarUrl: owner?.avatarUrl || '',
+      frequency: channel.frequency,
+      channelName: channel.channelName,
+      isLive: Boolean(channel.isLive),
+      startedAt: channel.startedAt,
+      listenerCount: getRadioListenerCount(channel.frequency),
+    };
+  });
 };
 
 const ensureRadioChannelForUser = async (user) => {
@@ -854,6 +976,15 @@ io.on('connection', (socket) => {
       if (!channel) return sendRadioError(ack, 'CHANNEL_NOT_FOUND', 'No Artwave Radio channel uses this frequency.');
       if (socket.data.isGuest || !socket.data.userId || String(channel.ownerId) !== String(socket.data.userId)) {
         return sendRadioError(ack, 'FORBIDDEN', 'Only the channel owner can broadcast on this frequency.');
+      }
+      const previous = radioBroadcasters.get(frequency);
+      if (previous && previous.socketId !== socket.id) {
+        const oldSocket = io.sockets.sockets.get(previous.socketId);
+        if (oldSocket) {
+          oldSocket.data.isBroadcaster = false;
+          oldSocket.leave(radioRoomName(frequency));
+        }
+        radioBroadcasters.delete(frequency);
       }
 
       channel.isLive = true;
@@ -1041,28 +1172,28 @@ app.post('/api/radio/activate', authenticateRadioUser, async (req, res) => {
     let user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: 'User account not found.' });
     if (!user.radioFrequency) {
-      let assigned = false;
-      for (let attempt = 0; attempt < 1200 && !assigned; attempt += 1) {
-        const frequency = ((1000 + Math.floor(Math.random() * 1000)) / 10).toFixed(1);
-        try {
-          user = await User.findOneAndUpdate(
-            { _id: user._id, $or: [{ radioFrequency: { $exists: false } }, { radioFrequency: null }] },
-            { $set: { radioFrequency: frequency, radioEnabled: true } },
-            { new: true }
-          );
-          if (!user) {
-            user = await User.findById(req.user._id);
-            assigned = Boolean(user?.radioFrequency);
-            break;
-          }
-          assigned = true;
-        } catch (err) {
-          if (err?.code !== 11000) throw err;
-          user = await User.findById(req.user._id);
-          if (user?.radioFrequency) assigned = true;
-        }
+      const frequency = await assignUniqueRadioFrequency(user._id);
+      if (!frequency) {
+        return res.status(503).json({ error: 'Could not assign a radio frequency. Please try again.' });
       }
-      if (!assigned || !user?.radioFrequency) {
+      try {
+        const updated = await User.findOneAndUpdate(
+          { _id: user._id, $or: [{ radioFrequency: { $exists: false } }, { radioFrequency: null }] },
+          { $set: { radioFrequency: frequency, radioEnabled: true } },
+          { new: true }
+        );
+        user = updated || await User.findById(req.user._id);
+      } catch (err) {
+        if (err?.code !== 11000) throw err;
+        const retry = await assignUniqueRadioFrequency(user._id);
+        if (!retry) return res.status(503).json({ error: 'Could not assign a radio frequency. Please try again.' });
+        user = await User.findOneAndUpdate(
+          { _id: user._id, $or: [{ radioFrequency: { $exists: false } }, { radioFrequency: null }] },
+          { $set: { radioFrequency: retry, radioEnabled: true } },
+          { new: true }
+        );
+      }
+      if (!user?.radioFrequency) {
         return res.status(503).json({ error: 'Could not assign a radio frequency. Please try again.' });
       }
     }
@@ -1080,21 +1211,8 @@ app.post('/api/radio/activate', authenticateRadioUser, async (req, res) => {
 
 app.get('/api/radio/channels', async (req, res) => {
   try {
-    let channels = await RadioChannel.find({}).sort({ isLive: -1, updatedAt: -1 }).limit(20);
-    if (!channels || channels.length === 0) {
-      const creators = await User.find({}).limit(10);
-      for (const creator of creators) {
-        if (!creator.radioFrequency) {
-          const baseFreq = 100 + (parseInt(String(creator._id).slice(-4), 16) % 900) / 10;
-          creator.radioFrequency = baseFreq.toFixed(1);
-          creator.radioEnabled = true;
-          await creator.save().catch(() => {});
-        }
-        await ensureRadioChannelForUser(creator).catch(() => {});
-      }
-      channels = await RadioChannel.find({}).sort({ isLive: -1, updatedAt: -1 }).limit(20);
-    }
-    const results = await Promise.all(channels.map(formatRadioChannel));
+    const channels = await RadioChannel.find({}).sort({ isLive: -1, updatedAt: -1 }).limit(50);
+    const results = await formatRadioChannels(channels);
     res.json({ channels: results.filter(Boolean) });
   } catch (err) {
     console.error('[Radio] Fetch channels failed:', err.message);
@@ -1125,7 +1243,7 @@ app.get('/api/radio/search', async (req, res) => {
     } else {
       channels = await RadioChannel.find({}).sort({ isLive: -1, updatedAt: -1 }).limit(20);
     }
-    const results = await Promise.all(channels.map(formatRadioChannel));
+    const results = await formatRadioChannels(channels);
     res.json({ channels: results.filter(Boolean) });
   } catch (err) {
     console.error('[Radio] Search failed:', err.message);
@@ -1285,6 +1403,9 @@ const PostSchema = new mongoose.Schema({
   }],
   createdAt: { type: Date, default: Date.now }
 });
+PostSchema.index({ userId: 1, visibility: 1, createdAt: -1 });
+PostSchema.index({ visibility: 1, createdAt: -1 });
+PostSchema.index({ createdAt: -1 });
 const Post = mongoose.model('Post', PostSchema);
 
 // 2. Artist Schema
@@ -1367,6 +1488,8 @@ const CourseSchema = new mongoose.Schema({
   visibility: { type: String, default: 'public' },
   createdAt: { type: Date, default: Date.now }
 }, { timestamps: true, strict: false });
+CourseSchema.index({ userId: 1, createdAt: -1 });
+CourseSchema.index({ visibility: 1, createdAt: -1 });
 const Course = mongoose.model('Course', CourseSchema);
 
 // 5. Community Schema
@@ -1468,7 +1591,8 @@ const storage = multer.diskStorage({
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage: storage, limits: { fileSize: 100 * 1024 * 1024 } });
+const MAX_VIDEO_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1 GB
+const upload = multer({ storage: storage, limits: { fileSize: MAX_VIDEO_UPLOAD_BYTES } });
 
 const makeMediaUrlPublic = (req, value) => {
   if (typeof value !== 'string' || !value.startsWith('/uploads/')) return value;
@@ -1505,6 +1629,11 @@ const sendPushToUser = async (userId, { title, body, data }) => {
         title: title || 'Artube',
         body: body || '',
         data: data || {},
+        channelId: 'artube-alerts',
+        priority: 'high',
+        badge: 1,
+        ttl: 3600,
+        interruptionLevel: 'timeSensitive',
       }));
 
     if (messages.length === 0) return;
@@ -1584,34 +1713,8 @@ async function createAndDispatchNotification({
     });
 
     const unreadCount = await Notification.countDocuments({ userId, unread: true });
-
-    // 1. Deliver in real-time to user's WebSocket clients on /ws
     const userStr = String(userId);
-    const msg = JSON.stringify({
-      type: 'NEW_NOTIFICATION',
-      notification,
-      unreadCount,
-      timestamp: Date.now(),
-    });
-
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        const clientInfo = wsClients.get(client);
-        if (clientInfo && String(clientInfo.userId) === userStr) {
-          try {
-            client.send(msg);
-          } catch (_e) {}
-        }
-      }
-    });
-
-    // 2. Deliver to Socket.IO if connected in user room
-    try {
-      io.to(`user:${userStr}`).emit('notification:new', { notification, unreadCount });
-    } catch (_e) {}
-
-    // 3. Send remote push notification via Expo Push if registered
-    sendPushToUser(userId, {
+    const pushPayload = {
       title: title || 'Artube',
       body: text || `${user} ${action}`,
       data: {
@@ -1622,6 +1725,32 @@ async function createAndDispatchNotification({
         ...(courseId ? { courseId: String(courseId) } : {}),
         ...(channelFrequency ? { frequency: channelFrequency } : {}),
       },
+    };
+
+    setImmediate(() => {
+      const msg = JSON.stringify({
+        type: 'NEW_NOTIFICATION',
+        notification,
+        unreadCount,
+        timestamp: Date.now(),
+      });
+
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          const clientInfo = wsClients.get(client);
+          if (clientInfo && String(clientInfo.userId) === userStr) {
+            try {
+              client.send(msg);
+            } catch (_e) {}
+          }
+        }
+      });
+
+      try {
+        io.to(`user:${userStr}`).emit('notification:new', { notification, unreadCount });
+      } catch (_e) {}
+
+      sendPushToUser(userId, pushPayload);
     });
 
     return notification;
@@ -1734,18 +1863,7 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       const requestedUserId = (req.query.userId || req.query.creatorId || '').trim();
       let requestedUser = null;
       if (requestedUserId) {
-        if (mongoose.Types.ObjectId.isValid(requestedUserId)) {
-          requestedUser = await User.findById(requestedUserId);
-        } else {
-          const normalizedIdentifier = requestedUserId.toLowerCase();
-          requestedUser = await User.findOne({
-            $or: [
-              { firebaseUid: requestedUserId },
-              { username: new RegExp(`^${escapeRegex(normalizeUsername(requestedUserId))}$`, 'i') },
-              { email: new RegExp(`^${escapeRegex(normalizedIdentifier)}$`, 'i') },
-            ]
-          });
-        }
+        requestedUser = await findUserByIdOrFirebaseUid(requestedUserId);
       }
       const isOwnContent = Boolean(req.user && requestedUser && String(req.user._id) === String(requestedUser._id));
 
@@ -1774,13 +1892,11 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
             $or: [
               { userId: requestedUser._id },
               { userId: null, userEmail: requestedUser.email },
-              { userId: null, author: { $in: [requestedUser.displayName, requestedUser.username].filter(Boolean) } }
+              ...(requestedUser.username ? [{ userId: null, author: requestedUser.username }] : [])
             ]
           });
-        } else {
-          andClauses.push({
-            $or: [{ author: requestedUserId }, { userEmail: requestedUserId.toLowerCase() }]
-          });
+        } else if (requestedUserId.includes('@')) {
+          andClauses.push({ userEmail: requestedUserId.toLowerCase() });
         }
       }
 
@@ -1788,14 +1904,12 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         filter.$and = andClauses;
       }
 
-      let query = Model.find(filter).sort({ createdAt: -1 });
+      const { limit, skip } = parsePageLimit(req.query, 50, 100);
+      let query = Model.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
       if (Model.modelName === 'Post' || Model.modelName === 'Course' || Model.modelName === 'Video') {
         query = query
-          .select('-userEmail')
+          .select('-userEmail -artSvg')
           .populate('userId', 'username displayName avatarUrl coverUrl bio isBanned');
-        if (Model.modelName === 'Post') {
-          query = query.populate('comments.userId', 'username displayName avatarUrl');
-        }
       }
       const items = await query;
       const modifiedItems = items.map((doc) => {
@@ -2745,15 +2859,15 @@ app.get('/api/search', async (req, res) => {
     if (!q) {
       return res.json({ posts: [], videos: [], artists: [], courses: [], communities: [], challenges: [] });
     }
-    const regex = new RegExp(q, 'i');
+    const regex = new RegExp(escapeRegex(q).slice(0, 80), 'i');
     const [posts, videos, artists, courses, communities, challenges, users] = await Promise.all([
-      Post.find({ $or: [{ title: regex }, { author: regex }, { tag: regex }] }).limit(20),
-      Video.find({ $or: [{ title: regex }, { author: regex }] }).limit(20),
-      Artist.find({ $or: [{ name: regex }, { bio: regex }] }).limit(20),
-      Course.find({ $or: [{ title: regex }, { author: regex }] }).limit(20),
-      Community.find({ $or: [{ name: regex }, { description: regex }] }).limit(10),
-      Challenge.find({ $or: [{ title: regex }, { description: regex }] }).limit(10),
-      User.find({ $or: [{ displayName: regex }, { username: regex }, { bio: regex }] }).select('-password').limit(20)
+      Post.find({ $or: [{ title: regex }, { author: regex }, { tag: regex }] }).select('-userEmail -artSvg').limit(20).lean(),
+      Video.find({ $or: [{ title: regex }, { author: regex }] }).limit(20).lean(),
+      Artist.find({ $or: [{ name: regex }, { bio: regex }] }).limit(20).lean(),
+      Course.find({ $or: [{ title: regex }, { author: regex }] }).select('-userEmail').limit(20).lean(),
+      Community.find({ $or: [{ name: regex }, { description: regex }] }).limit(10).lean(),
+      Challenge.find({ $or: [{ title: regex }, { description: regex }] }).limit(10).lean(),
+      User.find({ $or: [{ displayName: regex }, { username: regex }, { bio: regex }] }).select('displayName username avatarUrl bio followers').limit(20).lean()
     ]);
     const artistNames = new Set(artists.map(a => (a.name || '').toLowerCase()));
     const mappedUsers = (users || [])
@@ -2881,17 +2995,20 @@ scheduledPostPublisher.unref?.();
 // View count endpoint – increments viewsCount every time someone opens an artwork
 app.post('/api/posts/:id/view', authenticateIfProvided, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    const post = await Post.findById(req.params.id).select('userId viewsCount views').lean();
     if (!post) return res.status(404).json({ error: 'Post not found' });
     const ownerId = post.userId ? String(post.userId) : '';
     const viewerId = req.user?._id ? String(req.user._id) : '';
     if (ownerId && viewerId && ownerId === viewerId) {
       return res.json({ viewsCount: post.viewsCount || 0, views: post.views || '0 views' });
     }
-    post.viewsCount = (post.viewsCount || 0) + 1;
-    post.views = `${post.viewsCount} views`;
-    await post.save();
-    res.json({ viewsCount: post.viewsCount, views: post.views });
+    const updated = await Post.findByIdAndUpdate(
+      post._id,
+      { $inc: { viewsCount: 1 } },
+      { new: true, projection: { viewsCount: 1 } }
+    ).lean();
+    const viewsCount = updated?.viewsCount || (post.viewsCount || 0) + 1;
+    res.json({ viewsCount, views: `${viewsCount} views` });
   } catch (err) {
     res.status(500).json({ error: 'Failed to increment view count' });
   }
@@ -3001,9 +3118,9 @@ const findOwnedComment = (post, commentId, user) => {
     return { error: 'You can only change your own comment.', status: 403 };
   }
   if (!ownerId && user.role !== 'admin') {
-    const author = String(comment.author || '').toLowerCase();
-    const mine = [user.displayName, user.username].filter(Boolean).map((value) => String(value).toLowerCase());
-    if (!mine.includes(author)) {
+    const author = String(comment.author || '').replace(/^@/, '').toLowerCase();
+    const mine = String(user.username || '').replace(/^@/, '').toLowerCase();
+    if (!mine || mine !== author) {
       return { error: 'You can only change your own comment.', status: 403 };
     }
   }
@@ -3130,8 +3247,12 @@ app.post('/api/users/firebase-sync', async (req, res) => {
       if (uploaded) finalCoverUrl = uploaded;
     }
 
-    // Try to find existing user by firebaseUid or email
+    // Identity is the Firebase uid and the verified email. A shared display name must not attach this login to another account.
     let user = await User.findOne({ firebaseUid });
+    if (user && email && String(user.email || '').toLowerCase() !== email) {
+      await User.updateOne({ _id: user._id }, { $unset: { firebaseUid: '' } });
+      user = null;
+    }
     if (!user) {
       user = await User.findOne({ email: new RegExp(`^${escapeRegex(email)}$`, 'i') });
       if (user?.firebaseUid && user.firebaseUid !== firebaseUid) {
@@ -3316,36 +3437,35 @@ app.post('/api/users/firebase-sync', async (req, res) => {
   }
 });
 
-// Helper to find user by MongoDB _id, firebaseUid, username, displayName, or email
+// Account lookup uses id, Firebase uid, exact username, or email. Display name is not unique and is not an identity.
 const findUserByIdOrFirebaseUid = async (ident) => {
   if (!ident) return null;
   const clean = String(ident).trim();
-  if (mongoose.Types.ObjectId.isValid(clean)) {
+  if (mongoose.Types.ObjectId.isValid(clean) && /^[a-f\d]{24}$/i.test(clean)) {
     const u = await User.findById(clean);
     if (u) return u;
   }
+  const username = normalizeUsername(clean);
   return await User.findOne({
     $or: [
       { firebaseUid: clean },
-      { username: clean },
-      { username: new RegExp('^' + escapeRegex(clean) + '$', 'i') },
-      { displayName: clean },
-      { displayName: new RegExp('^' + escapeRegex(clean) + '$', 'i') },
+      ...(username ? [{ username: new RegExp('^' + escapeRegex(username) + '$', 'i') }] : []),
       { email: new RegExp(`^${escapeRegex(clean.toLowerCase())}$`, 'i') }
     ]
   });
 };
 
+const contentOwnedByUser = (user) => {
+  const clauses = [{ userId: user._id }];
+  if (user.email) clauses.push({ userId: null, userEmail: user.email });
+  if (user.username) clauses.push({ userId: null, author: user.username });
+  return { $or: clauses };
+};
+
 app.get('/api/users/me/analytics', authenticateUser, async (req, res) => {
   try {
     const user = req.user;
-    const postFilter = {
-      $or: [
-        { userId: user._id },
-        { userEmail: user.email },
-        { author: { $in: [user.displayName, user.username].filter(Boolean) } },
-      ],
-    };
+    const postFilter = contentOwnedByUser(user);
     const posts = await Post.find(postFilter)
       .select('title viewsCount views likesCount comments createdAt')
       .lean();
@@ -3569,12 +3689,13 @@ app.get('/api/users/me/activity', authenticateUser, async (req, res) => {
       };
     };
 
-    const user = await User.findById(req.user._id).select('likedPosts');
-    const likedIds = (user?.likedPosts || []).filter(Boolean);
+    const user = await User.findById(req.user._id).select('likedPosts').lean();
+    const likedIds = (user?.likedPosts || []).filter(Boolean).slice(-80);
     const likedPosts = likedIds.length
       ? await Post.find({ _id: { $in: likedIds } })
           .select('title thumbnailUrl image previewUrl coverUrl bannerUrl images extraMediaUrl mediaUrl author avatarUrl userId mp4Url hlsUrl mediaType likesCount views viewsCount createdAt bunnyVideoId')
           .populate('userId', 'displayName username avatarUrl')
+          .lean()
       : [];
     const likedMap = new Map(likedPosts.map((post) => [String(post._id), post]));
     const likes = likedIds
@@ -3591,7 +3712,8 @@ app.get('/api/users/me/activity', authenticateUser, async (req, res) => {
       .select('title thumbnailUrl image previewUrl coverUrl bannerUrl images extraMediaUrl mediaUrl author avatarUrl comments userId createdAt mediaType mp4Url hlsUrl bunnyVideoId')
       .populate('userId', 'displayName username avatarUrl')
       .sort({ createdAt: -1 })
-      .limit(80);
+      .limit(80)
+      .lean();
 
     const comments = [];
     commentedPosts.forEach((post) => {
@@ -3796,10 +3918,16 @@ app.post('/api/reports/:id/action', async (req, res) => {
 // Get all users/artists
 app.get('/api/users', authenticateIfProvided, async (req, res) => {
   try {
-    const users = await User.find({}).sort({ createdAt: -1 });
+    const { limit, skip } = parsePageLimit(req.query, 60, 100);
+    const users = await User.find({ isBanned: { $ne: true } })
+      .select('-password -authVersion -email -firebaseUid -pushTokens -connectionRequests -sentRequests -blockedUsers -restrictedWords -likedPosts -enrolledCourses -payout -profileVisitors')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     const blockedIds = new Set((req.user?.blockedUsers || []).map((id) => String(id)));
     res.json(users
-      .filter((user) => !user.isBanned && !blockedIds.has(String(user._id)))
+      .filter((user) => !blockedIds.has(String(user._id)))
       .map(toPublicUser));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -3831,7 +3959,7 @@ app.put('/api/users/:id', authenticateUser, async (req, res) => {
     }
 
     if (isPrivate !== undefined) user.isPrivate = Boolean(isPrivate);
-    if (displayName !== undefined && displayName.trim() !== '') user.displayName = displayName.trim();
+    const nextDisplayName = typeof displayName === 'string' ? displayName.trim() : '';
     if (username !== undefined) {
       const cleanHandle = normalizeUsername(username);
       if (!cleanHandle) return res.status(400).json({ error: 'Username is required.' });
@@ -3840,14 +3968,21 @@ app.put('/api/users/:id', authenticateUser, async (req, res) => {
           return res.status(400).json({ error: 'Username must be 3 to 30 characters using letters, numbers, and underscores.' });
         }
         if (!(await isUsernameAvailable(cleanHandle, user._id))) {
+          if (nextDisplayName) {
+            user.displayName = nextDisplayName;
+            await user.save();
+          }
           return res.status(409).json({
             code: 'USERNAME_TAKEN',
-            error: 'Username is already in use. Please choose another username.'
+            error: nextDisplayName
+              ? 'That username is taken. Your name was saved; choose a different username.'
+              : 'Username is already in use. Please choose another username.'
           });
         }
         user.username = cleanHandle;
       }
     }
+    if (nextDisplayName) user.displayName = nextDisplayName;
     if (bio !== undefined) user.bio = bio;
     if (location !== undefined) user.location = location;
     if (website !== undefined) user.website = website;
@@ -3966,27 +4101,23 @@ app.get('/api/users/:id/posts', authenticateIfProvided, async (req, res) => {
         return res.json([]);
       }
 
-      filter.$or = [
-        { userId: user._id },
-        { userId: null, userEmail: user.email },
-        { userId: null, author: { $in: [user.displayName, user.username].filter(Boolean) } }
-      ];
+      filter = { ...filter, ...contentOwnedByUser(user) };
       if (!isOwnProfile && req.user?.role !== 'admin') filter.visibility = 'public';
-    } else if (mongoose.Types.ObjectId.isValid(rawId)) {
+    } else if (/^[a-f\d]{24}$/i.test(rawId)) {
       filter = { userId: rawId, visibility: 'public' };
+    } else if (String(rawId).includes('@')) {
+      filter = { visibility: 'public', userEmail: String(rawId).toLowerCase() };
     } else {
-      filter = {
-        visibility: 'public',
-        $or: [
-          { author: new RegExp(`^${escapeRegex(rawId)}$`, 'i') },
-          { userEmail: rawId.toLowerCase() }
-        ]
-      };
+      return res.json([]);
     }
+    const { limit, skip } = parsePageLimit(req.query, 50, 100);
     const posts = await Post.find(filter)
-      .select('-userEmail')
+      .select('-userEmail -artSvg')
       .populate('userId', 'username displayName avatarUrl coverUrl bio')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(posts);
   } catch (err) {
     console.error('Failed to fetch user posts:', err);
@@ -3994,25 +4125,26 @@ app.get('/api/users/:id/posts', authenticateIfProvided, async (req, res) => {
   }
 });
 
-// Get user public profile by ID, username, or displayName
+// Get user public profile by account id, username, or email
 app.get('/api/users/profile/:identifier', authenticateIfProvided, async (req, res) => {
   try {
     const ident = (req.params.identifier || '').trim();
     if (!ident) return res.status(400).json({ error: 'Identifier required' });
 
-    let user = mongoose.isValidObjectId(ident) ? await User.findById(ident) : null;
+    let user = /^[a-f\d]{24}$/i.test(ident) ? await User.findById(ident) : null;
     if (!user) {
-      user = await User.findOne({
-        $or: [
-          { username: new RegExp(`^${escapeRegex(normalizeUsername(ident))}$`, 'i') },
-          { displayName: new RegExp(`^${escapeRegex(ident)}$`, 'i') }
-        ]
-      });
+      const username = normalizeUsername(ident);
+      user = username
+        ? await User.findOne({ username: new RegExp(`^${escapeRegex(username)}$`, 'i') })
+        : null;
+    }
+    if (!user && ident.includes('@')) {
+      user = await User.findOne({ email: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
     }
     if (!user) {
       const artist = await Artist.findOne({ name: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
       if (!artist) return res.status(404).json({ error: 'User not found.' });
-      const postCount = await Post.countDocuments({ author: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
+      const postCount = 0;
       return res.json({
         _id: artist ? artist._id : null,
         id: artist ? artist._id : null,
@@ -4037,14 +4169,6 @@ app.get('/api/users/profile/:identifier', authenticateIfProvided, async (req, re
     const isConnected = Boolean(viewerId && (user.followers || []).some((f) => f.toString() === viewerId));
     const isRequested = Boolean(viewerId && (user.connectionRequests || []).some((r) => r.toString() === viewerId));
 
-    const artworksCount = await Post.countDocuments({
-      $or: [
-        { userId: user._id },
-        { userEmail: user.email },
-        { author: { $in: [user.displayName, user.username] } }
-      ]
-    });
-
     const userObj = toPublicUser(user);
     userObj.isPrivate = !!user.isPrivate;
     userObj.isConnected = isConnected;
@@ -4052,7 +4176,7 @@ app.get('/api/users/profile/:identifier', authenticateIfProvided, async (req, re
     userObj.isOwner = isOwner;
     userObj.followersCount = (user.followers || []).length;
     userObj.followingCount = (user.following || []).length;
-    userObj.artworksCount = artworksCount;
+    userObj.artworksCount = Number(user.artworksCount || 0);
 
     // Content lock for private accounts
     if (user.isPrivate && !isOwner && !isConnected && req.user?.role !== 'admin') {
@@ -4083,23 +4207,20 @@ app.post('/api/users/:id/follow', authenticateUser, async (req, res) => {
     // Gate: Check if user is trying to follow themselves
     if (
       (followerUser._id && req.params.id && followerUser._id.toString() === req.params.id) ||
-      (followerUser.username && searchTarget && followerUser.username.toLowerCase() === searchTarget.toLowerCase()) ||
-      (followerUser.displayName && searchTarget && followerUser.displayName.toLowerCase() === searchTarget.toLowerCase())
+      (followerUser.username && searchTarget && followerUser.username.toLowerCase() === normalizeUsername(searchTarget))
     ) {
       return res.status(400).json({ error: 'Cannot follow yourself' });
     }
 
     let targetUser = null;
-    if (req.params.id && req.params.id !== 'by-name' && mongoose.isValidObjectId(req.params.id)) {
+    if (req.params.id && req.params.id !== 'by-name' && /^[a-f\d]{24}$/i.test(req.params.id)) {
       targetUser = await User.findById(req.params.id);
     }
     if (!targetUser && searchTarget) {
-      targetUser = await User.findOne({
-        $or: [
-          { username: new RegExp(`^${escapeRegex(normalizeUsername(searchTarget))}$`, 'i') },
-          { displayName: new RegExp(`^${escapeRegex(searchTarget)}$`, 'i') }
-        ]
-      });
+      const username = normalizeUsername(searchTarget);
+      if (username) {
+        targetUser = await User.findOne({ username: new RegExp(`^${escapeRegex(username)}$`, 'i') });
+      }
     }
 
     if (!targetUser) {
@@ -4120,96 +4241,91 @@ app.post('/api/users/:id/follow', authenticateUser, async (req, res) => {
     if (!Array.isArray(targetUser.connectionRequests)) targetUser.connectionRequests = [];
     if (!Array.isArray(followerDoc.sentRequests)) followerDoc.sentRequests = [];
 
-    const isFollowing = targetUser.followers.some((f) => f.toString() === followerDoc._id.toString());
+    const followerId = followerDoc._id;
+    const targetId = targetUser._id;
+    const isFollowing = targetUser.followers.some((f) => f.toString() === followerId.toString());
 
     // 1. If currently following: unfollow immediately regardless of privacy
     if (isFollowing) {
-      targetUser.followers.pull(followerDoc._id);
-      followerDoc.following.pull(targetUser._id);
-      await targetUser.save();
-      await followerDoc.save();
+      await Promise.all([
+        User.updateOne({ _id: targetId }, { $pull: { followers: followerId } }),
+        User.updateOne({ _id: followerId }, { $pull: { following: targetId } }),
+      ]);
       return res.json({
         isFollowing: false,
         isRequested: false,
         isPending: false,
-        followersCount: targetUser.followers.length,
-        followingCount: followerDoc.following.length,
+        followersCount: Math.max(0, (targetUser.followers || []).length - 1),
+        followingCount: Math.max(0, (followerDoc.following || []).length - 1),
       });
     }
 
     // 2. If target is PRIVATE: Stage or cancel connection request
     if (targetUser.isPrivate) {
-      const alreadyRequested = targetUser.connectionRequests.some((r) => r.toString() === followerDoc._id.toString());
+      const alreadyRequested = targetUser.connectionRequests.some((r) => r.toString() === followerId.toString());
       if (alreadyRequested) {
-        // Cancel request
-        targetUser.connectionRequests.pull(followerDoc._id);
-        followerDoc.sentRequests.pull(targetUser._id);
-        await targetUser.save();
-        await followerDoc.save();
+        await Promise.all([
+          User.updateOne({ _id: targetId }, { $pull: { connectionRequests: followerId } }),
+          User.updateOne({ _id: followerId }, { $pull: { sentRequests: targetId } }),
+        ]);
         return res.json({
           isFollowing: false,
           isRequested: false,
           isPending: false,
-          followersCount: targetUser.followers.length,
-          followingCount: followerDoc.following.length,
+          followersCount: (targetUser.followers || []).length,
+          followingCount: (followerDoc.following || []).length,
           message: 'Connection request cancelled',
         });
-      } else {
-        // Send request
-        targetUser.connectionRequests.push(followerDoc._id);
-        followerDoc.sentRequests.push(targetUser._id);
-        await targetUser.save();
-        await followerDoc.save();
-
-        await createAndDispatchNotification({
-          userId: targetUser._id,
-          actorId: followerDoc._id,
-          user: followerDoc.displayName || followerDoc.username || 'Someone',
-          action: 'sent you a connection request',
-          text: `${followerDoc.displayName || followerDoc.username || 'Someone'} requested to connect with you`,
-          avatarUrl: followerDoc.avatarUrl || '',
-          type: 'connection_request',
-          title: 'Connection Request',
-          requesterId: followerDoc._id,
-          preventDuplicatesWithinMs: 60 * 60 * 1000,
-        }).catch((err) => console.error('Error creating request notification:', err));
-
-        return res.json({
-          isFollowing: false,
-          isRequested: true,
-          isPending: true,
-          followersCount: targetUser.followers.length,
-          followingCount: followerDoc.following.length,
-          message: 'Connection request sent',
-        });
       }
+
+      await Promise.all([
+        User.updateOne({ _id: targetId }, { $addToSet: { connectionRequests: followerId } }),
+        User.updateOne({ _id: followerId }, { $addToSet: { sentRequests: targetId } }),
+      ]);
+      await createAndDispatchNotification({
+        userId: targetId,
+        actorId: followerId,
+        user: followerDoc.displayName || followerDoc.username || 'Someone',
+        action: 'sent you a connection request',
+        text: `${followerDoc.displayName || followerDoc.username || 'Someone'} requested to connect with you`,
+        avatarUrl: followerDoc.avatarUrl || '',
+        type: 'connection_request',
+        title: 'Connection Request',
+        requesterId: followerId,
+        preventDuplicatesWithinMs: 60 * 60 * 1000,
+      }).catch((err) => console.error('Error creating request notification:', err));
+      return res.json({
+        isFollowing: false,
+        isRequested: true,
+        isPending: true,
+        followersCount: (targetUser.followers || []).length,
+        followingCount: (followerDoc.following || []).length,
+        message: 'Connection request sent',
+      });
     }
 
-    // 3. If target is PUBLIC: Instant follow
-    targetUser.followers.push(followerDoc._id);
-    followerDoc.following.push(targetUser._id);
-
+    // 3. If target is PUBLIC: Instant follow, then notify
+    await Promise.all([
+      User.updateOne({ _id: targetId }, { $addToSet: { followers: followerId } }),
+      User.updateOne({ _id: followerId }, { $addToSet: { following: targetId } }),
+    ]);
     await createAndDispatchNotification({
-      userId: targetUser._id,
-      actorId: followerDoc._id,
+      userId: targetId,
+      actorId: followerId,
       user: followerDoc.displayName || followerDoc.username || 'Someone',
       action: 'started following you',
       text: `${followerDoc.displayName || followerDoc.username || 'Someone'} started following you`,
       avatarUrl: followerDoc.avatarUrl || '',
       type: 'follow',
-      title: 'New Follower',
+      title: 'New Connection',
       preventDuplicatesWithinMs: 60 * 60 * 1000,
     }).catch((err) => console.error('Error creating follow notification:', err));
-
-    await targetUser.save();
-    await followerDoc.save();
-
-    res.json({
+    return res.json({
       isFollowing: true,
       isRequested: false,
       isPending: false,
-      followersCount: targetUser.followers.length,
-      followingCount: followerDoc.following.length,
+      followersCount: (targetUser.followers || []).length + 1,
+      followingCount: (followerDoc.following || []).length + 1,
     });
   } catch (err) {
     console.error('Follow error:', err);
@@ -4307,9 +4423,9 @@ app.post('/api/users/requests/:id/reject', authenticateUser, async (req, res) =>
 // Get user stats
 app.get('/api/users/:id/stats', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('displayName username followers following');
+    const user = await User.findById(req.params.id).select('username email followers following');
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const artworksCount = await Post.countDocuments({ author: { $in: [user.displayName, user.username] } });
+    const artworksCount = await Post.countDocuments(contentOwnedByUser(user));
     res.json({
       artworksCount,
       followersCount: user.followers.length,
@@ -4627,6 +4743,18 @@ app.post('/api/auth/logout', authenticateUser, async (req, res) => {
   } catch (_err) {
     res.status(500).json({ error: 'Failed to logout' });
   }
+});
+
+app.use((err, req, res, next) => {
+  if (err && (err.code === 'LIMIT_FILE_SIZE' || err.name === 'MulterError')) {
+    const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+    return res.status(tooLarge ? 413 : 400).json({
+      error: tooLarge
+        ? 'Video uploads can be up to 1 GB. Please choose a smaller file.'
+        : (err.message || 'Upload failed.'),
+    });
+  }
+  return next(err);
 });
 
 // Start Server
