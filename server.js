@@ -543,6 +543,8 @@ const toAuthenticatedUser = (user) => {
 
 const applyViewerContentFilters = (items, viewer) => {
   if (!Array.isArray(items)) return items;
+  const viewerId = viewer?._id ? String(viewer._id) : null;
+  const isAdmin = viewer?.role === 'admin';
   const blockedIds = new Set((viewer?.blockedUsers || []).map((id) => String(id)));
   const words = (viewer?.restrictedWords || [])
     .map((word) => String(word || '').trim().toLowerCase())
@@ -552,6 +554,20 @@ const applyViewerContentFilters = (items, viewer) => {
     if (author?.isBanned) return false;
     const authorId = String(author?._id || item.userId || '');
     if (authorId && blockedIds.has(authorId)) return false;
+
+    // 1. Private video check: if visibility === 'private', only owner and admin can see
+    if (item.visibility === 'private') {
+      const isOwner = viewerId && authorId && viewerId === authorId;
+      if (!isOwner && !isAdmin) return false;
+    }
+
+    // 2. Private account check: if author account is private, only owner, connected followers, and admin can see
+    if (author?.isPrivate) {
+      const isOwner = viewerId && authorId && viewerId === authorId;
+      const isConnected = viewerId && Array.isArray(author.followers) && author.followers.some((f) => String(f) === viewerId);
+      if (!isOwner && !isConnected && !isAdmin) return false;
+    }
+
     if (!words.length) return true;
     const haystack = [
       item.title,
@@ -1915,7 +1931,7 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       if (Model.modelName === 'Post' || Model.modelName === 'Course' || Model.modelName === 'Video') {
         query = query
           .select('-userEmail -artSvg')
-          .populate('userId', 'username displayName avatarUrl coverUrl bio isBanned');
+          .populate('userId', 'username displayName avatarUrl coverUrl bio isBanned isPrivate followers');
       }
       const items = await query;
       const modifiedItems = items.map((doc) => {
@@ -2013,15 +2029,77 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
     try {
       let query = Model.findById(req.params.id);
       if (Model.modelName === 'Post' || Model.modelName === 'Course' || Model.modelName === 'Video') {
-        query = query.populate('userId', 'username displayName avatarUrl coverUrl bio');
+        query = query.populate('userId', 'username displayName avatarUrl coverUrl bio isPrivate followers connectionRequests');
         if (Model.modelName === 'Post') {
           query = query.populate('comments.userId', 'username displayName avatarUrl');
         }
       }
       const doc = await query;
-      if (!doc) return res.status(404).json({ error: `Item not found in ${Model.modelName}` });
+      if (!doc) {
+        if (Model.modelName === 'Post') {
+          const course = await Course.findById(req.params.id)
+            .populate('userId', 'username displayName avatarUrl coverUrl bio isPrivate followers connectionRequests');
+          if (course) {
+            const courseObj = course.toObject ? course.toObject() : { ...course };
+            courseObj.id = courseObj._id;
+            return res.json(courseObj);
+          }
+        }
+        return res.status(404).json({ error: `Item not found in ${Model.modelName}` });
+      }
       const item = doc.toObject ? doc.toObject() : { ...doc };
       const userObj = item.userId && typeof item.userId === 'object' ? item.userId : null;
+
+      const viewerId = req.user?._id ? String(req.user._id) : null;
+      const isAdmin = req.user?.role === 'admin';
+      const authorId = userObj?._id ? String(userObj._id) : (item.userId ? String(item.userId) : null);
+      const isOwner = Boolean(viewerId && authorId && viewerId === authorId);
+      const isConnected = Boolean(viewerId && userObj && Array.isArray(userObj.followers) && userObj.followers.some((f) => String(f) === viewerId));
+      const isRequested = Boolean(viewerId && userObj && Array.isArray(userObj.connectionRequests) && userObj.connectionRequests.some((r) => String(r) === viewerId));
+
+      item.isOwner = isOwner;
+      item.isConnected = isConnected;
+      item.isRequested = isRequested;
+
+      // 1. Private video (visibility === 'private')
+      if (item.visibility === 'private' && !isOwner && !isAdmin) {
+        return res.json({
+          id: item._id,
+          _id: item._id,
+          title: item.title,
+          author: item.author,
+          artist: item.artist || item.author,
+          avatar: item.avatar,
+          isPrivateVideo: true,
+          isLocked: true,
+          message: 'This video is private.',
+        });
+      }
+
+      // 2. Private account (user.isPrivate === true)
+      if (userObj?.isPrivate && !isOwner && !isConnected && !isAdmin) {
+        return res.json({
+          id: item._id,
+          _id: item._id,
+          title: item.title,
+          author: item.author,
+          artist: item.artist || item.author,
+          avatar: item.avatar,
+          userId: {
+            _id: userObj._id,
+            id: userObj._id,
+            displayName: userObj.displayName,
+            username: userObj.username,
+            avatarUrl: userObj.avatarUrl,
+            isPrivate: true,
+          },
+          isPrivateAccount: true,
+          isLocked: true,
+          isRequested,
+          isConnected: false,
+          message: 'This account is private. Send a connection request to watch this artwork.',
+        });
+      }
       if (userObj) {
         if (userObj.avatarUrl) {
           item.avatarUrl = userObj.avatarUrl;
@@ -2505,14 +2583,37 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       if (!item) {
         return res.status(404).json({ error: `Item not found in ${Model.modelName}` });
       }
-      const ownsItem = item.userId
-        ? String(item.userId) === String(req.user._id)
-        : Boolean(item.userEmail && item.userEmail.toLowerCase() === String(req.user.email || '').toLowerCase());
+      const myId = String(req.user._id);
+      const myEmail = String(req.user.email || '').trim().toLowerCase();
+      const myUsername = String(req.user.username || '').replace(/^@/, '').trim().toLowerCase();
+      const myName = String(req.user.displayName || req.user.name || '').trim().toLowerCase();
+
+      const itemUserId = item.userId ? String(item.userId) : '';
+      const itemEmail = String(item.userEmail || '').trim().toLowerCase();
+      const itemAuthor = String(item.author || item.instructor || '').replace(/^@/, '').trim().toLowerCase();
+
+      const ownsItem =
+        (itemUserId && itemUserId === myId) ||
+        (itemEmail && myEmail && itemEmail === myEmail) ||
+        (itemAuthor && myUsername && itemAuthor === myUsername) ||
+        (itemAuthor && myName && itemAuthor === myName);
+
       if (!ownsItem && req.user.role !== 'admin') {
         return res.status(403).json({ error: 'You can only delete your own content.' });
       }
 
       await item.deleteOne();
+
+      if (Model.modelName === 'Course') {
+        await User.updateMany(
+          { enrolledCourses: item._id },
+          { $pull: { enrolledCourses: item._id } }
+        ).catch(() => {});
+        await Notification.deleteMany({ courseId: item._id }).catch(() => {});
+      } else if (Model.modelName === 'Post') {
+        await Notification.deleteMany({ postId: item._id }).catch(() => {});
+      }
+
       if (item.bunnyVideoId) {
         deleteVideoFromBunnyStream(item.bunnyVideoId);
       }
@@ -3067,7 +3168,24 @@ scheduledPostPublisher.unref?.();
 app.post('/api/posts/:id/view', authenticateIfProvided, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id).select('userId viewsCount views').lean();
-    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!post) {
+      const course = await Course.findById(req.params.id).select('userId viewsCount views').lean();
+      if (course) {
+        const ownerId = course.userId ? String(course.userId) : '';
+        const viewerId = req.user?._id ? String(req.user._id) : '';
+        if (ownerId && viewerId && ownerId === viewerId) {
+          return res.json({ viewsCount: course.viewsCount || 0, views: course.views || '0 views' });
+        }
+        const updated = await Course.findByIdAndUpdate(
+          course._id,
+          { $inc: { viewsCount: 1 } },
+          { new: true, projection: { viewsCount: 1 } }
+        ).lean();
+        const viewsCount = updated?.viewsCount || (course.viewsCount || 0) + 1;
+        return res.json({ viewsCount, views: `${viewsCount} views` });
+      }
+      return res.status(404).json({ error: 'Post not found' });
+    }
     const ownerId = post.userId ? String(post.userId) : '';
     const viewerId = req.user?._id ? String(req.user._id) : '';
     if (ownerId && viewerId && ownerId === viewerId) {
@@ -3085,16 +3203,225 @@ app.post('/api/posts/:id/view', authenticateIfProvided, async (req, res) => {
   }
 });
 
-// GET single post by ID – used by the client for live count polling
-app.get('/api/posts/:id', async (req, res) => {
+// Helper to escape HTML safely
+const escapeHtml = (str) =>
+  String(str || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+
+// GET single post by ID – used by the client for live count polling & detail
+app.get('/api/posts/:id', authenticateIfProvided, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id).select('-userEmail');
-    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const post = await Post.findById(req.params.id)
+      .select('-userEmail')
+      .populate('userId', 'username displayName avatarUrl coverUrl bio isPrivate followers connectionRequests');
+    if (!post) {
+      const course = await Course.findById(req.params.id)
+        .select('-userEmail')
+        .populate('userId', 'username displayName avatarUrl coverUrl bio isPrivate followers connectionRequests');
+      if (course) {
+        const obj = course.toObject();
+        obj.id = obj._id;
+        return res.json(obj);
+      }
+      return res.status(404).json({ error: 'Post not found' });
+    }
     const obj = post.toObject();
     obj.id = obj._id;
+
+    const viewerId = req.user?._id ? String(req.user._id) : null;
+    const isAdmin = req.user?.role === 'admin';
+    const authorId = obj.userId?._id ? String(obj.userId._id) : (obj.userId ? String(obj.userId) : null);
+    const isOwner = Boolean(viewerId && authorId && viewerId === authorId);
+
+    const userDoc = obj.userId && typeof obj.userId === 'object' ? obj.userId : null;
+    const isConnected = Boolean(viewerId && userDoc && Array.isArray(userDoc.followers) && userDoc.followers.some((f) => String(f) === viewerId));
+    const isRequested = Boolean(viewerId && userDoc && Array.isArray(userDoc.connectionRequests) && userDoc.connectionRequests.some((r) => String(r) === viewerId));
+
+    obj.isOwner = isOwner;
+    obj.isConnected = isConnected;
+    obj.isRequested = isRequested;
+
+    // 1. Private video (visibility === 'private')
+    if (obj.visibility === 'private' && !isOwner && !isAdmin) {
+      return res.json({
+        id: obj.id,
+        _id: obj._id,
+        title: obj.title,
+        author: obj.author,
+        artist: obj.author,
+        avatar: obj.avatar,
+        isPrivateVideo: true,
+        isLocked: true,
+        message: 'This video is private.',
+      });
+    }
+
+    // 2. Private account (user.isPrivate === true)
+    if (userDoc?.isPrivate && !isOwner && !isConnected && !isAdmin) {
+      return res.json({
+        id: obj.id,
+        _id: obj._id,
+        title: obj.title,
+        author: obj.author,
+        artist: obj.author,
+        avatar: obj.avatar,
+        userId: {
+          _id: userDoc._id,
+          id: userDoc._id,
+          displayName: userDoc.displayName,
+          username: userDoc.username,
+          avatarUrl: userDoc.avatarUrl,
+          isPrivate: true,
+        },
+        isPrivateAccount: true,
+        isLocked: true,
+        isRequested,
+        isConnected: false,
+        message: 'This account is private. Send a connection request to watch this artwork.',
+      });
+    }
+
     res.json(obj);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch post' });
+  }
+});
+
+// YouTube-Style Web View and Rich Preview for Shared Artworks
+app.get('/watch/:id', async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id).populate('userId', 'displayName username avatarUrl isPrivate');
+    if (!post) {
+      return res.status(404).send('<!DOCTYPE html><html><body style="background:#0E131F;color:#fff;text-align:center;padding:60px;font-family:sans-serif;"><h1>Content not found</h1><p>This artwork or video may have been removed.</p></body></html>');
+    }
+
+    const title = post.title || 'Artube Video';
+    const author = post.author || post.userId?.displayName || post.userId?.username || 'Artist';
+    const description = post.description || `Watch "${title}" by ${author} on Artube.`;
+    const thumbUrl = post.thumbnailUrl || post.image || post.previewUrl || '';
+    const videoUrl = post.mp4Url || post.mediaUrl || '';
+    const isVideo = Boolean(videoUrl && (videoUrl.endsWith('.mp4') || post.mediaType === 'video' || post.bunnyVideoId));
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)} - Artube</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  
+  <!-- Open Graph / WhatsApp / Facebook -->
+  <meta property="og:site_name" content="Artube" />
+  <meta property="og:type" content="${isVideo ? 'video.other' : 'article'}" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  ${thumbUrl ? `<meta property="og:image" content="${escapeHtml(thumbUrl)}" />` : ''}
+  ${videoUrl ? `<meta property="og:video" content="${escapeHtml(videoUrl)}" />` : ''}
+  
+  <!-- Twitter -->
+  <meta name="twitter:card" content="${isVideo ? 'player' : 'summary_large_image'}" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  ${thumbUrl ? `<meta name="twitter:image" content="${escapeHtml(thumbUrl)}" />` : ''}
+
+  <style>
+    body { margin: 0; background: #0E131F; color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+    .card { background: #161D2E; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; overflow: hidden; max-width: 680px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    .player-wrap { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; }
+    video, img { width: 100%; height: 100%; object-fit: contain; }
+    .info { padding: 20px 24px; }
+    h1 { font-size: 20px; margin: 0 0 8px 0; font-weight: 700; color: #FFF; }
+    p { margin: 0 0 16px 0; color: #94A3B8; font-size: 14px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; background: #B31E1B; color: #FFF; padding: 12px 24px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="player-wrap">
+      ${isVideo && videoUrl
+        ? `<video src="${escapeHtml(videoUrl)}" poster="${escapeHtml(thumbUrl)}" controls playsinline></video>`
+        : `<img src="${escapeHtml(thumbUrl || '')}" alt="${escapeHtml(title)}" />`
+      }
+    </div>
+    <div class="info">
+      <h1>${escapeHtml(title)}</h1>
+      <p>By ${escapeHtml(author)} • Artube</p>
+      <a href="artube://watch/${post._id}" class="btn">Open in Artube App</a>
+    </div>
+  </div>
+  <script>
+    setTimeout(function() {
+      window.location.href = "artube://watch/${post._id}";
+    }, 150);
+  </script>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    res.status(500).send('<h1>Failed to load video</h1>');
+  }
+});
+
+// YouTube-Style Web View and Rich Preview for Shared Courses
+app.get('/course/:id', async (req, res) => {
+  try {
+    const course = await Course.findById(req.params.id).populate('userId', 'displayName username avatarUrl');
+    if (!course) {
+      return res.status(404).send('<!DOCTYPE html><html><body style="background:#0E131F;color:#fff;text-align:center;padding:60px;font-family:sans-serif;"><h1>Course not found</h1></body></html>');
+    }
+
+    const title = course.title || 'Masterclass Course';
+    const author = course.instructor || course.author || course.userId?.displayName || 'Artube Instructor';
+    const description = course.description || `Enroll in "${title}" by ${author} on Artube.`;
+    const thumbUrl = course.thumbnailUrl || course.image || course.previewUrl || '';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)} - Artube Course</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  
+  <meta property="og:site_name" content="Artube" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  ${thumbUrl ? `<meta property="og:image" content="${escapeHtml(thumbUrl)}" />` : ''}
+
+  <style>
+    body { margin: 0; background: #0E131F; color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+    .card { background: #161D2E; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; overflow: hidden; max-width: 680px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    .player-wrap { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; }
+    img { width: 100%; height: 100%; object-fit: cover; }
+    .info { padding: 20px 24px; }
+    h1 { font-size: 20px; margin: 0 0 8px 0; font-weight: 700; color: #FFF; }
+    p { margin: 0 0 16px 0; color: #94A3B8; font-size: 14px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; background: #B31E1B; color: #FFF; padding: 12px 24px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="player-wrap">
+      <img src="${escapeHtml(thumbUrl || '')}" alt="${escapeHtml(title)}" />
+    </div>
+    <div class="info">
+      <h1>${escapeHtml(title)}</h1>
+      <p>Course by ${escapeHtml(author)} • Artube Learn</p>
+      <a href="artube://course/${course._id}" class="btn">Enroll on Artube App</a>
+    </div>
+  </div>
+  <script>
+    setTimeout(function() {
+      window.location.href = "artube://course/${course._id}";
+    }, 150);
+  </script>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    res.status(500).send('<h1>Failed to load course</h1>');
   }
 });
 
@@ -4186,6 +4513,8 @@ app.get('/api/users/:id/posts', authenticateIfProvided, async (req, res) => {
       filter = { userId: rawId, visibility: 'public' };
     } else if (String(rawId).includes('@')) {
       filter = { visibility: 'public', userEmail: String(rawId).toLowerCase() };
+    } else if (rawId && typeof rawId === 'string' && rawId.trim()) {
+      filter = { visibility: 'public', author: new RegExp(`^${escapeRegex(rawId.trim())}$`, 'i') };
     } else {
       return res.json([]);
     }
@@ -4221,21 +4550,35 @@ app.get('/api/users/profile/:identifier', authenticateIfProvided, async (req, re
       user = await User.findOne({ email: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
     }
     if (!user) {
+      user = await User.findOne({ displayName: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
+    }
+    if (!user) {
+      user = await User.findOne({ name: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
+    }
+    if (!user) {
+      const postWithAuthor = await Post.findOne({ author: new RegExp(`^${escapeRegex(ident)}$`, 'i') }).populate('userId');
+      if (postWithAuthor?.userId && typeof postWithAuthor.userId === 'object') {
+        user = postWithAuthor.userId;
+      }
+    }
+    if (!user) {
       const artist = await Artist.findOne({ name: new RegExp(`^${escapeRegex(ident)}$`, 'i') });
-      if (!artist) return res.status(404).json({ error: 'User not found.' });
-      const postCount = 0;
+      const authorPosts = await Post.find({ author: new RegExp(`^${escapeRegex(ident)}$`, 'i') }).limit(10);
+      const sampleAvatar = artist?.avatar || authorPosts[0]?.avatarUrl || authorPosts[0]?.avatar || '';
+      const sampleBio = artist?.bio || 'Digital Creator on Artube';
+
       return res.json({
         _id: artist ? artist._id : null,
         id: artist ? artist._id : null,
         displayName: artist ? artist.name : ident,
         username: ident.toLowerCase().replace(/[\s_]+/g, ''),
-        bio: artist ? artist.bio : 'Digital Creator',
-        avatarUrl: artist ? artist.avatar : '',
+        bio: sampleBio,
+        avatarUrl: sampleAvatar,
         coverUrl: artist ? (artist.coverUrl || '') : '',
         followers: [],
         followersCount: artist ? (parseInt(artist.followers, 10) || 0) : 0,
         followingCount: 0,
-        artworksCount: postCount,
+        artworksCount: authorPosts.length,
         isPrivate: false,
         isConnected: false,
         isRequested: false,
