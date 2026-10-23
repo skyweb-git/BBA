@@ -578,6 +578,12 @@ const serializeBlockedAccounts = (blockedUsers = []) => blockedUsers
     };
   });
 
+const publicImageUrl = (value) => {
+  const url = String(value || '').trim();
+  if (!url || url.startsWith('data:')) return '';
+  return url;
+};
+
 const toPublicUser = (user) => {
   const userObj = toAuthenticatedUser(user);
   delete userObj.email;
@@ -849,7 +855,7 @@ const formatRadioChannel = async (channel) => {
     ownerId: String(channel.ownerId),
     displayName: owner?.displayName || owner?.username || 'Artwave artist',
     username: owner?.username || '',
-    avatarUrl: owner?.avatarUrl || '',
+    avatarUrl: publicImageUrl(owner?.avatarUrl),
     frequency: channel.frequency,
     channelName: channel.channelName,
     isLive: Boolean(channel.isLive),
@@ -871,7 +877,7 @@ const formatRadioChannels = async (channels = []) => {
       ownerId: String(channel.ownerId),
       displayName: owner?.displayName || owner?.username || 'Artwave artist',
       username: owner?.username || '',
-      avatarUrl: owner?.avatarUrl || '',
+      avatarUrl: publicImageUrl(owner?.avatarUrl),
       frequency: channel.frequency,
       channelName: channel.channelName,
       isLive: Boolean(channel.isLive),
@@ -1591,7 +1597,7 @@ const storage = multer.diskStorage({
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
-const MAX_VIDEO_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1 GB
+const MAX_VIDEO_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
 const upload = multer({ storage: storage, limits: { fileSize: MAX_VIDEO_UPLOAD_BYTES } });
 
 const makeMediaUrlPublic = (req, value) => {
@@ -2534,9 +2540,20 @@ app.post('/api/courses/:id/enroll', authenticateUser, async (req, res) => {
     const courseObjectId = new mongoose.Types.ObjectId(courseId);
     const userId = req.user._id;
 
-    const course = await Course.findById(courseObjectId).select('_id enrolledStudents enrolledCount').lean();
+    const course = await Course.findById(courseObjectId).select('_id enrolledStudents enrolledCount userId userEmail author').lean();
     if (!course) {
       return res.status(404).json({ error: 'Course not found.' });
+    }
+
+    // A publisher / creator cannot enroll in their own course
+    const isPublisher = (course.userId && String(course.userId) === String(userId))
+      || (course.userEmail && req.user.email && String(course.userEmail).toLowerCase() === String(req.user.email).toLowerCase());
+
+    if (isPublisher) {
+      return res.status(400).json({
+        error: 'You published this course and cannot enroll as a student.',
+        isCreator: true,
+      });
     }
 
     await User.updateOne(
@@ -2733,6 +2750,60 @@ app.delete('/api/notifications', authenticateUser, async (req, res) => {
 });
 makeCrudEndpoints('/api/communities', Community, true);
 makeCrudEndpoints('/api/challenges', Challenge, true);
+// --- BUNNY.NET VIDEO STATUS ENDPOINT (transcoding progress) ---
+app.get('/api/bunny/video-status/:guid', async (req, res) => {
+  try {
+    const guid = (req.params.guid || '').trim();
+    if (!guid) return res.status(400).json({ error: 'Missing video guid' });
+
+    const { libraryId, apiKey } = getBunnyStreamConfig({ readOnly: true });
+
+    const response = await fetch(`https://video.bunnycdn.com/library/${libraryId}/videos/${guid}`, {
+      method: 'GET',
+      headers: {
+        'AccessKey': apiKey,
+        'Accept': 'application/json',
+      },
+    });
+
+    // Bunny may return 404 while the video is still being ingested — surface as a
+    // distinct "processing" state so the client does not treat it as a hard failure.
+    if (response.status === 404) {
+      return res.status(200).json({
+        guid,
+        status: 0,
+        encodeProgress: 0,
+        processing: true,
+        ready: false,
+      });
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: `Bunny API error: ${response.status}` });
+    }
+
+    const data = await response.json();
+
+    // Bunny status codes: 0=Created, 1=Uploaded, 2=Processing, 3=Transcoding, 4=Finished, 5=Error, 6=UploadFailed
+    const status = data.status ?? 0;
+    const encodeProgress = typeof data.encodeProgress === 'number' ? data.encodeProgress : null;
+    const ready = status === 4;
+    const failed = status === 5 || status === 6;
+
+    return res.status(200).json({
+      guid,
+      status,
+      encodeProgress,
+      processing: !ready && !failed,
+      ready,
+      failed,
+    });
+  } catch (err) {
+    console.error('[Bunny video-status] Error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // --- BUNNY.NET STREAM VIDEOS ENDPOINT ---
 app.get('/api/bunny/videos', async (req, res) => {
   try {
@@ -3920,7 +3991,7 @@ app.get('/api/users', authenticateIfProvided, async (req, res) => {
   try {
     const { limit, skip } = parsePageLimit(req.query, 60, 100);
     const users = await User.find({ isBanned: { $ne: true } })
-      .select('-password -authVersion -email -firebaseUid -pushTokens -connectionRequests -sentRequests -blockedUsers -restrictedWords -likedPosts -enrolledCourses -payout -profileVisitors')
+      .select('username displayName avatarUrl bio followers')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -3928,7 +3999,15 @@ app.get('/api/users', authenticateIfProvided, async (req, res) => {
     const blockedIds = new Set((req.user?.blockedUsers || []).map((id) => String(id)));
     res.json(users
       .filter((user) => !blockedIds.has(String(user._id)))
-      .map(toPublicUser));
+      .map((user) => ({
+        _id: user._id,
+        id: user._id,
+        username: user.username,
+        displayName: user.displayName || user.username || 'Artist',
+        avatarUrl: publicImageUrl(user.avatarUrl),
+        bio: user.bio || '',
+        followersCount: Array.isArray(user.followers) ? user.followers.length : 0,
+      })));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
@@ -4292,7 +4371,7 @@ app.post('/api/users/:id/follow', authenticateUser, async (req, res) => {
         type: 'connection_request',
         title: 'Connection Request',
         requesterId: followerId,
-        preventDuplicatesWithinMs: 60 * 60 * 1000,
+        preventDuplicatesWithinMs: 15 * 1000,
       }).catch((err) => console.error('Error creating request notification:', err));
       return res.json({
         isFollowing: false,
@@ -4318,7 +4397,7 @@ app.post('/api/users/:id/follow', authenticateUser, async (req, res) => {
       avatarUrl: followerDoc.avatarUrl || '',
       type: 'follow',
       title: 'New Connection',
-      preventDuplicatesWithinMs: 60 * 60 * 1000,
+      preventDuplicatesWithinMs: 15 * 1000,
     }).catch((err) => console.error('Error creating follow notification:', err));
     return res.json({
       isFollowing: true,
@@ -4387,7 +4466,7 @@ app.post('/api/users/requests/:id/accept', authenticateUser, async (req, res) =>
       avatarUrl: targetUser.avatarUrl || '',
       type: 'connection_accepted',
       title: 'Connection Accepted',
-      preventDuplicatesWithinMs: 60 * 60 * 1000,
+      preventDuplicatesWithinMs: 15 * 1000,
     }).catch((err) => console.error('Error creating accept notification:', err));
 
     res.json({ success: true, message: 'Connection request accepted' });
@@ -4750,7 +4829,7 @@ app.use((err, req, res, next) => {
     const tooLarge = err.code === 'LIMIT_FILE_SIZE';
     return res.status(tooLarge ? 413 : 400).json({
       error: tooLarge
-        ? 'Video uploads can be up to 1 GB. Please choose a smaller file.'
+        ? 'Video uploads can be up to 500 MB. Please choose a smaller file.'
         : (err.message || 'Upload failed.'),
     });
   }
