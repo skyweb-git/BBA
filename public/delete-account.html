@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account &amp; Data Deletion - Artube</title>
+  <meta name="description" content="Request permanent account and personal data deletion for Artube (com.artube.app) by ArtArtist. Instructions and web request portal.">
+  <meta name="robots" content="index, follow">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #B31E1B;
+      --primary-dark: #801814;
+      --primary-light: #FDE8E8;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --bg-page: #F8FAFC;
+      --bg-card: #FFFFFF;
+      --border-color: #E2E8F0;
+      --success: #16A34A;
+      --success-bg: #DCFCE7;
+      --info-bg: #EFF6FF;
+      --radius: 12px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+      --container-max: 820px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.7;
+      font-size: 16px;
+    }
+
+    header.site-header {
+      background: #FFFFFF;
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .header-container {
+      max-width: var(--container-max);
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .brand-logo-img {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    .brand-fallback-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+    }
+
+    .brand-name {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: #0F172A;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .nav-link {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--text-muted);
+    }
+
+    .nav-link:hover { background: #F1F5F9; color: var(--text-main); }
+    .nav-link.active { background: var(--primary-light); color: var(--primary-dark); }
+
+    .hero-banner {
+      background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+      border-bottom: 1px solid var(--border-color);
+      padding: 44px 20px 32px;
+      text-align: center;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #FEE2E2;
+      color: #991B1B;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+    }
+
+    h1.page-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 32px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 10px;
+    }
+
+    .content-wrapper {
+      max-width: var(--container-max);
+      margin: 32px auto 60px;
+      padding: 0 20px;
+    }
+
+    .card {
+      background: #FFFFFF;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    h2.card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .step-card {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin-top: 14px;
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      background: var(--primary);
+      color: white;
+      border-radius: 50%;
+      font-size: 13px;
+      font-weight: 700;
+      margin-right: 8px;
+    }
+
+    ul, ol {
+      padding-left: 24px;
+      margin-bottom: 16px;
+    }
+
+    li { margin-bottom: 8px; }
+
+    .btn-delete {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--primary);
+      color: white;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 12px 20px;
+      border-radius: 8px;
+      transition: background 0.2s;
+      margin-top: 12px;
+    }
+
+    .btn-delete:hover {
+      background: var(--primary-dark);
+    }
+
+    footer.site-footer {
+      background: #FFFFFF;
+      border-top: 1px solid var(--border-color);
+      padding: 36px 20px;
+      text-align: center;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .footer-links a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a href="privacy-policy.html" class="brand" aria-label="Artube Home">
+        <img src="artube-logo.png" alt="Artube Logo" class="brand-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div class="brand-fallback-icon" style="display:none;">A</div>
+        <span class="brand-name">Artube</span>
+      </a>
+      <nav class="nav-links">
+        <a href="privacy-policy.html" class="nav-link">Privacy Policy</a>
+        <a href="terms-conditions.html" class="nav-link">Terms &amp; Conditions</a>
+        <a href="delete-account.html" class="nav-link active">Account Deletion</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero-banner">
+    <div class="badge-pill">Google Play Data Safety Compliant</div>
+    <h1 class="page-title">Request Account &amp; Data Deletion</h1>
+    <p style="color: var(--text-muted); max-width: 620px; margin: 0 auto;">
+      We respect your privacy and right to be forgotten. Learn how to immediately delete your Artube account and personal data.
+    </p>
+  </section>
+
+  <main class="content-wrapper">
+    <div class="card">
+      <h2 class="card-title">Option 1: Delete Directly in the Artube App (Instant)</h2>
+      <p>If you have the Artube app installed on your Android device, you can delete your account and data immediately:</p>
+      
+      <div class="step-card">
+        <ol style="padding-left: 10px; list-style: none;">
+          <li style="margin-bottom: 12px;"><span class="step-num">1</span> Open the <strong>Artube</strong> app on your device.</li>
+          <li style="margin-bottom: 12px;"><span class="step-num">2</span> Tap on your <strong>Profile</strong> tab in the bottom navigation.</li>
+          <li style="margin-bottom: 12px;"><span class="step-num">3</span> Open <strong>Settings</strong> &rarr; select <strong>Account Settings</strong>.</li>
+          <li style="margin-bottom: 12px;"><span class="step-num">4</span> Scroll to the bottom and select <strong>Delete Account</strong>.</li>
+          <li><span class="step-num">5</span> Read the confirmation warning and confirm deletion. Your account session will terminate immediately and your data will be permanently removed.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Option 2: Web / Email Deletion Request</h2>
+      <p>If you have uninstalled the application or can no longer access your device, submit a web request to our privacy team:</p>
+      
+      <div style="background: #FEF2F2; border-left: 4px solid var(--primary); padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <p style="margin-bottom: 8px;"><strong>Email:</strong> <a href="mailto:support@artube.app?subject=Account%20and%20Data%20Deletion%20Request%20-%20Artube" style="color: var(--primary-dark); font-weight: 700;">support@artube.app</a></p>
+        <p style="margin-bottom: 8px;"><strong>Subject:</strong> <code>Account and Data Deletion Request - Artube</code></p>
+        <p style="margin-bottom: 0;"><strong>Required Details:</strong> Please send the email from the email address registered with your Artube account and include your Username. Our team will verify and delete your account within 7 business days.</p>
+      </div>
+
+      <a href="mailto:support@artube.app?subject=Account%20and%20Data%20Deletion%20Request%20-%20Artube" class="btn-delete">
+        Send Deletion Request Email
+      </a>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">What Data Is Deleted?</h2>
+      <ul>
+        <li><strong>Profile Data:</strong> Your name, username, biography, profile avatar, banner cover, and social links.</li>
+        <li><strong>User Content:</strong> All uploaded artwork images, videos, descriptions, tags, and course lessons.</li>
+        <li><strong>Community Interactions:</strong> Comments, likes, saves, and following connections.</li>
+        <li><strong>Credentials &amp; Security Tokens:</strong> Password hashes, OAuth tokens, and push notification device tokens.</li>
+      </ul>
+      <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 0;">
+        <em>Retention Note:</em> We do not retain personal data following deletion. Certain transaction records or security logs may be retained only for the minimum period legally required for anti-fraud, legal dispute defense, or tax compliance.
+      </p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-links">
+      <a href="privacy-policy.html">Privacy Policy</a>
+      <span>•</span>
+      <a href="terms-conditions.html">Terms &amp; Conditions</a>
+      <span>•</span>
+      <a href="delete-account.html">Account &amp; Data Deletion</a>
+    </div>
+    <p style="font-size: 13px; color: var(--text-muted);">&copy; 2026 ArtArtist &middot; Developed by SkyWeb &middot; Artube (com.artube.app)</p>
+  </footer>
+
+</body>
+</html>

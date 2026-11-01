@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Artube</title>
+  <meta name="description" content="Official Privacy Policy for Artube (com.artube.app) by ArtArtist. Learn how your data is collected, used, protected, and deleted.">
+  <meta name="robots" content="index, follow">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #B31E1B;
+      --primary-dark: #801814;
+      --primary-light: #FDE8E8;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --bg-page: #F8FAFC;
+      --bg-card: #FFFFFF;
+      --border-color: #E2E8F0;
+      --success: #16A34A;
+      --success-bg: #DCFCE7;
+      --info-bg: #EFF6FF;
+      --info-border: #BFDBFE;
+      --info-text: #1E40AF;
+      --radius: 12px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+      --container-max: 920px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.7;
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navigation Bar */
+    header.site-header {
+      background: #FFFFFF;
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .header-container {
+      max-width: var(--container-max);
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .brand-logo-img {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    .brand-fallback-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+    }
+
+    .brand-name {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #0F172A;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .nav-link {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    .nav-link:hover {
+      background: #F1F5F9;
+      color: var(--text-main);
+    }
+
+    .nav-link.active {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+    }
+
+    /* Hero Banner */
+    .hero-banner {
+      background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+      border-bottom: 1px solid var(--border-color);
+      padding: 48px 20px 36px;
+      text-align: center;
+    }
+
+    .hero-inner {
+      max-width: var(--container-max);
+      margin: 0 auto;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--success-bg);
+      color: var(--success);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+
+    .badge-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    h1.page-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 34px;
+      font-weight: 700;
+      color: #0F172A;
+      line-height: 1.25;
+      margin-bottom: 12px;
+    }
+
+    .hero-meta {
+      font-size: 14px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* Main Container */
+    .content-wrapper {
+      max-width: var(--container-max);
+      margin: 36px auto 60px;
+      padding: 0 20px;
+    }
+
+    /* Application Identification Card */
+    .app-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 32px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .app-card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--primary-dark);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .app-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      font-size: 14px;
+    }
+
+    .app-card-item {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .app-card-label {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .app-card-val {
+      color: #0F172A;
+      font-weight: 600;
+      word-break: break-word;
+    }
+
+    .app-card-val a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .app-card-val a:hover {
+      text-decoration: underline;
+    }
+
+    /* Table of contents quick navigation */
+    .toc-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 32px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .toc-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 12px;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .toc-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px 16px;
+      font-size: 14px;
+    }
+
+    .toc-list a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.15s ease;
+    }
+
+    .toc-list a:hover {
+      color: var(--primary-dark);
+      text-decoration: underline;
+    }
+
+    /* Content Card */
+    .policy-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 36px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Headings & Text */
+    h2.section-heading {
+      font-family: 'Outfit', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-top: 36px;
+      margin-bottom: 14px;
+      padding-top: 24px;
+      border-top: 1px solid #F1F5F9;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    h2.section-heading:first-of-type {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+    }
+
+    .section-num {
+      color: var(--primary);
+      font-size: 18px;
+    }
+
+    h3.sub-heading {
+      font-family: 'Outfit', sans-serif;
+      font-size: 17px;
+      font-weight: 600;
+      color: #1E293B;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin-bottom: 16px;
+      color: #334155;
+    }
+
+    ul, ol {
+      margin-bottom: 18px;
+      padding-left: 24px;
+      color: #334155;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    li strong {
+      color: #0F172A;
+    }
+
+    /* Notice callouts */
+    .callout {
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin: 20px 0;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .callout-info {
+      background: var(--info-bg);
+      border-left: 4px solid var(--primary);
+      color: #1E3A8A;
+    }
+
+    .callout-success {
+      background: var(--success-bg);
+      border-left: 4px solid var(--success);
+      color: #14532D;
+    }
+
+    .callout-highlight {
+      background: #FFFBEB;
+      border-left: 4px solid #F59E0B;
+      color: #78350F;
+    }
+
+    /* Structured Matrix Table */
+    .table-container {
+      overflow-x: auto;
+      margin: 20px 0 24px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+    }
+
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      text-align: left;
+    }
+
+    table.data-table th {
+      background: #F1F5F9;
+      color: #0F172A;
+      font-weight: 700;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-color);
+      font-family: 'Outfit', sans-serif;
+    }
+
+    table.data-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #F1F5F9;
+      vertical-align: top;
+      color: #334155;
+    }
+
+    table.data-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    table.data-table tr:nth-child(even) {
+      background-color: #FAFAFA;
+    }
+
+    .badge-mandatory {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      background: #E2E8F0;
+      color: #334155;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .badge-optional {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      background: #FEF3C7;
+      color: #92400E;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    /* Steps box */
+    .steps-box {
+      background: #F8FAFC;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin: 16px 0;
+    }
+
+    .steps-box ol {
+      margin-bottom: 0;
+      padding-left: 20px;
+    }
+
+    .steps-box li {
+      margin-bottom: 10px;
+    }
+
+    .steps-box li:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Footer */
+    footer.site-footer {
+      background: #FFFFFF;
+      border-top: 1px solid var(--border-color);
+      padding: 40px 20px;
+      margin-top: 60px;
+    }
+
+    .footer-container {
+      max-width: var(--container-max);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 16px;
+    }
+
+    .footer-logos {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .footer-logos img {
+      height: 28px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .footer-links a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+
+    .footer-copy {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* Print styling */
+    @media print {
+      header.site-header, .toc-card, footer.site-footer, .nav-links {
+        display: none !important;
+      }
+      body {
+        background: white;
+        color: black;
+      }
+      .policy-card, .app-card {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .header-container {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .nav-links {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .policy-card {
+        padding: 22px 18px;
+      }
+      h1.page-title {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="site-header">
+    <div class="header-container">
+      <a href="privacy-policy.html" class="brand" aria-label="Artube Home">
+        <img src="artube-logo.png" alt="Artube Logo" class="brand-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div class="brand-fallback-icon" style="display:none;">A</div>
+        <span class="brand-name">Artube</span>
+      </a>
+      <nav class="nav-links" aria-label="Policy Navigation">
+        <a href="privacy-policy.html" class="nav-link active">Privacy Policy</a>
+        <a href="terms-conditions.html" class="nav-link">Terms &amp; Conditions</a>
+        <a href="delete-account.html" class="nav-link">Account Deletion</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Banner -->
+  <section class="hero-banner">
+    <div class="hero-inner">
+      <div class="badge-pill">
+        <span class="badge-dot"></span>
+        Google Play Store Compliant · Public Webpage
+      </div>
+      <h1 class="page-title">Privacy Policy for Artube</h1>
+      <div class="hero-meta">
+        <span><strong>Effective Date:</strong> October 21, 2026</span>
+        <span>•</span>
+        <span><strong>Last Updated:</strong> October 25, 2026</span>
+        <span>•</span>
+        <span><strong>Version:</strong> 1.0.1</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Content Container -->
+  <main class="content-wrapper">
+
+    <!-- App Identification Metadata Box -->
+    <div class="app-card">
+      <div class="app-card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+        Application &amp; Developer Details
+      </div>
+      <div class="app-card-grid">
+        <div class="app-card-item">
+          <div class="app-card-label">Application Name</div>
+          <div class="app-card-val">Artube</div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Android Package ID</div>
+          <div class="app-card-val"><code>com.artube.app</code></div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Publisher / Entity</div>
+          <div class="app-card-val">ArtArtist</div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Development Team</div>
+          <div class="app-card-val">SkyWeb IT Solutions</div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Support &amp; Privacy Contact</div>
+          <div class="app-card-val"><a href="mailto:support@artube.app">support@artube.app</a></div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Official Service URL</div>
+          <div class="app-card-val"><a href="https://artube.artartist.in" target="_blank" rel="noopener">https://artube.artartist.in</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Table of Contents -->
+    <div class="toc-card">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#section-1">1. Who We Are &amp; Scope</a></li>
+        <li><a href="#section-2">2. Information We Collect</a></li>
+        <li><a href="#section-3">3. Sensitive Permissions &amp; Hardware Access</a></li>
+        <li><a href="#section-4">4. Data Processing &amp; Purpose Matrix</a></li>
+        <li><a href="#section-5">5. How We Use Your Information</a></li>
+        <li><a href="#section-6">6. Third-Party Services &amp; SDK Disclosures</a></li>
+        <li><a href="#section-7">7. Data Retention &amp; Security</a></li>
+        <li><a href="#section-8">8. User Rights &amp; In-App Privacy Controls</a></li>
+        <li><a href="#section-9">9. Account &amp; Data Deletion Policy</a></li>
+        <li><a href="#section-10">10. Children’s Privacy (Under 13)</a></li>
+        <li><a href="#section-11">11. International Transfers &amp; Regional Rights</a></li>
+        <li><a href="#section-12">12. Changes to This Privacy Policy</a></li>
+        <li><a href="#section-13">13. Contact &amp; Inquiries</a></li>
+      </ul>
+    </div>
+
+    <!-- Main Legal Document Content Card -->
+    <article class="policy-card">
+
+      <!-- Section 1 -->
+      <h2 id="section-1" class="section-heading">
+        <span class="section-num">1.</span> Who We Are &amp; Scope
+      </h2>
+      <p>
+        Welcome to <strong>Artube</strong> (&ldquo;the App&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;, or &ldquo;our&rdquo;), a mobile community and streaming platform crafted for visual artists, creators, and learners. Artube is owned and operated by <strong>ArtArtist</strong>, with software engineering and infrastructure maintained by the <strong>SkyWeb</strong> technology team.
+      </p>
+      <p>
+        This Privacy Policy specifically governs the Android application distributed under the package name <strong><code>com.artube.app</code></strong> and the web services hosted under <strong><code>https://artube.artartist.in</code></strong>. It explains transparently how we collect, store, utilize, disclose, and safeguard your personal information when you install, create an account with, or interact with Artube.
+      </p>
+      <div class="callout callout-info">
+        <strong>Transparency Promise:</strong> We do NOT sell, rent, monetize, or trade your personal data, audio recordings, or artistic content to data brokers or third-party advertising networks.
+      </div>
+
+      <!-- Section 2 -->
+      <h2 id="section-2" class="section-heading">
+        <span class="section-num">2.</span> Information We Collect
+      </h2>
+      <p>
+        To deliver video streaming, live audio radio, artwork sharing, and educational courses, Artube collects only the information necessary to fulfill these core services. We collect the following categories of data:
+      </p>
+
+      <h3 class="sub-heading">A. Information You Voluntarily Provide</h3>
+      <ul>
+        <li><strong>Account Registration Details:</strong> When you register an account, we collect your name, username, email address, and encrypted authentication credentials. If you choose to sign in using <strong>Google Sign-In</strong>, we collect your verified Google name, email address, Google ID, and profile photo provided by Google OAuth.</li>
+        <li><strong>Artist Profile Details:</strong> Information you choose to add to your public creator profile, such as biography, portfolio links, art categories/skills, profile avatar, and header cover image.</li>
+        <li><strong>User-Generated Content (UGC):</strong> Artwork photos, video demonstrations, audio streams, course lesson notes, comments, likes, playlist saves, and community discussions that you post or share.</li>
+        <li><strong>Creator &amp; Payout Settings (Optional):</strong> If you participate in Creator monetization, course offerings, or tip features, you may optionally provide payout preferences (such as PayPal email or bank details). Payout details are strictly stored for processing transactions and are never shared for advertising.</li>
+      </ul>
+
+      <h3 class="sub-heading">B. Information Collected Automatically</h3>
+      <ul>
+        <li><strong>App Interactions &amp; Usage:</strong> Videos watched, artwork views, creators followed, live radio rooms tuned into, search queries, and interaction timestamps.</li>
+        <li><strong>Device &amp; Diagnostic Information:</strong> Device model, operating system version, app version (e.g., 1.0.1), preferred language, crash logs, and network connection status (Wi-Fi/Cellular).</li>
+        <li><strong>Push Notification Tokens:</strong> A unique device push token (via Expo Notifications / Firebase Cloud Messaging) to deliver alerts regarding new uploads, comments, follower updates, and live broadcast events.</li>
+      </ul>
+
+      <!-- Section 3 -->
+      <h2 id="section-3" class="section-heading">
+        <span class="section-num">3.</span> Sensitive Permissions &amp; Hardware Access
+      </h2>
+      <p>
+        In accordance with Google Play's <em>Sensitive User and Device Data Policy</em>, Artube requests only permissions essential for user-facing features, with explicit runtime prompts and clear in-app disclosures:
+      </p>
+
+      <div class="callout callout-highlight">
+        <strong>Hardware Permissions Summary:</strong>
+        <ul style="margin-top:8px; margin-bottom:0;">
+          <li><strong>Microphone (<code>RECORD_AUDIO</code>):</strong> Used <em>exclusively</em> during user-initiated live radio sessions (&ldquo;Artwave Live&rdquo;) and speech recognition (&ldquo;Voice Search&rdquo;). Artube <strong>never</strong> records audio in the background or when the app is inactive.</li>
+          <li><strong>Photos &amp; Storage (<code>READ_MEDIA_IMAGES</code> / Gallery):</strong> Used <em>only</em> when you select an image or video file to publish an artwork post, upload an educational lesson, or update your profile avatar. We do not scan or upload your private photo gallery.</li>
+          <li><strong>Notifications (<code>POST_NOTIFICATIONS</code>):</strong> Used to notify you of interactions, live events from artists you follow, and system announcements. You can turn notifications on or off at any time in App Settings or Android System Settings.</li>
+          <li><strong>Wake Lock (<code>WAKE_LOCK</code>):</strong> Ensures smooth, stutter-free playback of Artwave Live audio and video streams without display interruptions.</li>
+        </ul>
+      </div>
+
+      <!-- Section 4 -->
+      <h2 id="section-4" class="section-heading">
+        <span class="section-num">4.</span> Data Processing &amp; Purpose Matrix
+      </h2>
+      <p>
+        The table below provides a comprehensive overview of each data category, its explicit purpose, whether it is required, and how it is processed:
+      </p>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Data Category</th>
+              <th>Specific Purpose</th>
+              <th>Type</th>
+              <th>Third-Party Sharing</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Account &amp; Auth</strong><br>(Name, Email, Google ID)</td>
+              <td>User authentication, account recovery, session management, spam prevention.</td>
+              <td><span class="badge-mandatory">Mandatory</span></td>
+              <td>Google OAuth (Authentication only)</td>
+            </tr>
+            <tr>
+              <td><strong>Profile Information</strong><br>(Avatar, Bio, Links)</td>
+              <td>Displays your public artist identity to other community members.</td>
+              <td><span class="badge-optional">Optional</span></td>
+              <td>Not shared (Publicly visible within app)</td>
+            </tr>
+            <tr>
+              <td><strong>Microphone / Voice</strong><br>(Live Audio Stream &amp; Voice Search)</td>
+              <td>Real-time streaming on Artwave Live and transcribing voice queries for search.</td>
+              <td><span class="badge-optional">User-Initiated</span></td>
+              <td>WebRTC media signaling (Never sold or recorded secretly)</td>
+            </tr>
+            <tr>
+              <td><strong>Photos &amp; Videos</strong><br>(Artwork &amp; Courses)</td>
+              <td>Hosting and streaming artist videos, artwork gallery, and course materials.</td>
+              <td><span class="badge-optional">User-Initiated</span></td>
+              <td>Secure Cloud Storage &amp; CDN</td>
+            </tr>
+            <tr>
+              <td><strong>Push Tokens &amp; Device Info</strong><br>(Expo/FCM token, OS version)</td>
+              <td>Delivering push alerts, preventing duplicate sessions, analyzing crash reports.</td>
+              <td><span class="badge-mandatory">Technical</span></td>
+              <td>Expo Push Service / Firebase</td>
+            </tr>
+            <tr>
+              <td><strong>Privacy Preferences</strong><br>(Blocked users, filtered words)</td>
+              <td>Enforcing your custom safety preferences and filtering out unwanted content.</td>
+              <td><span class="badge-optional">User-Configured</span></td>
+              <td>None (Stored locally &amp; synced securely)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Section 5 -->
+      <h2 id="section-5" class="section-heading">
+        <span class="section-num">5.</span> How We Use Your Information
+      </h2>
+      <p>We use the data we collect solely for the following legitimate purposes:</p>
+      <ol>
+        <li><strong>Core App Functionality:</strong> Providing account authentication, user profiles, video player feeds, course catalogs, and community comments.</li>
+        <li><strong>Artwave Live &amp; Audio Broadcasts:</strong> Powering real-time WebRTC audio streams so artists can host radio talks and listeners can tune in.</li>
+        <li><strong>Voice-Powered Search:</strong> Translating spoken queries into text inside the search bar so you can find tutorials and creators without typing.</li>
+        <li><strong>Safety &amp; Community Integrity:</strong> Enforcing our Terms of Service, filtering prohibited or sexually exploitative content, preventing automated bots, and enabling user blocking and reporting tools.</li>
+        <li><strong>Customer Support &amp; Communication:</strong> Responding to user inquiries, policy clarification requests, bug reports, and sending critical security notices.</li>
+      </ol>
+
+      <!-- Section 6 -->
+      <h2 id="section-6" class="section-heading">
+        <span class="section-num">6.</span> Third-Party Services &amp; SDK Disclosures
+      </h2>
+      <p>
+        Artube integrates selected industry-standard software development kits (SDKs) and cloud services to ensure reliable application performance. These providers process data on our behalf under strict confidentiality agreements:
+      </p>
+      <ul>
+        <li><strong>Google Play Services &amp; Google Sign-In:</strong> Used to provide seamless, secure OAuth authentication. Refer to <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+        <li><strong>Expo &amp; Firebase Cloud Messaging (FCM):</strong> Used to deliver push notifications and handle runtime application updates. Refer to <a href="https://expo.dev/privacy" target="_blank" rel="noopener">Expo's Privacy Policy</a>.</li>
+        <li><strong>WebRTC:</strong> Facilitates low-latency peer-to-peer audio transmission for Artwave Live radio broadcasts. Audio frames are streamed in real time and are not permanently archived without creator consent.</li>
+        <li><strong>Cloud Infrastructure &amp; Databases (MongoDB):</strong> Secured backend infrastructure hosted with encrypted storage to maintain account data and user feeds.</li>
+      </ul>
+
+      <!-- Section 7 -->
+      <h2 id="section-7" class="section-heading">
+        <span class="section-num">7.</span> Data Retention &amp; Security
+      </h2>
+      <p>
+        We employ technical, administrative, and physical safeguards designed to protect your personal data against unauthorized access, loss, or alteration:
+      </p>
+      <ul>
+        <li><strong>Transport Layer Security (TLS/HTTPS):</strong> All communications between the Artube mobile application and our backend server (<code>https://artube.artartist.in</code>) are encrypted using modern SSL/TLS protocols.</li>
+        <li><strong>Password Protection:</strong> If you register with an email and password, your password is encrypted using strong salted hashing algorithms (bcrypt) and is never visible in plaintext.</li>
+        <li><strong>Retention Policy:</strong> We retain account data for as long as your account remains active. When you delete your account, your profile, uploads, comments, and tokens are permanently removed from active databases, subject only to minimal retention required by law or security logging.</li>
+      </ul>
+
+      <!-- Section 8 -->
+      <h2 id="section-8" class="section-heading">
+        <span class="section-num">8.</span> User Rights &amp; In-App Privacy Controls
+      </h2>
+      <p>Artube provides users with complete autonomy over their privacy settings within the app:</p>
+      <ul>
+        <li><strong>Account Privacy Mode:</strong> You can toggle between a public profile or a private profile from App Settings.</li>
+        <li><strong>Account Blocking:</strong> You can block any artist or user at any time. Blocked accounts cannot view your feed, follow you, or send you notifications.</li>
+        <li><strong>Restricted Keyword Filtering:</strong> You can set custom word filters to automatically screen out unwanted terms in comments.</li>
+        <li><strong>Mature Content (18+) Filter:</strong> Sensitive artistic content is restricted by default and can only be enabled by verified adult accounts.</li>
+        <li><strong>Revoking Permissions:</strong> You can revoke Microphone, Gallery, or Notification permissions at any time via Android Settings &rarr; Apps &rarr; Artube &rarr; Permissions.</li>
+      </ul>
+
+      <!-- Section 9 -->
+      <h2 id="section-9" class="section-heading">
+        <span class="section-num">9.</span> Account &amp; Data Deletion Policy
+      </h2>
+      <p>
+        In accordance with Google Play's <em>Account Deletion Policy</em>, Artube provides two straightforward methods for you to request the permanent deletion of your account and all associated personal data:
+      </p>
+
+      <div class="steps-box">
+        <h3 class="sub-heading" style="margin-top:0;">Method 1: Direct In-App Deletion (Instant)</h3>
+        <ol>
+          <li>Open the <strong>Artube</strong> application on your mobile device.</li>
+          <li>Navigate to the <strong>Profile / Settings</strong> tab.</li>
+          <li>Tap on <strong>Account Settings</strong> &rarr; scroll to <strong>Delete Account</strong>.</li>
+          <li>Confirm your deletion request. Your account, profile, uploads, and data will be immediately scheduled for permanent purging.</li>
+        </ol>
+      </div>
+
+      <div class="steps-box">
+        <h3 class="sub-heading" style="margin-top:0;">Method 2: Web / Email Deletion Request</h3>
+        <p>If you have uninstalled the app or cannot log in, you can request account deletion by emailing our support team:</p>
+        <ul>
+          <li><strong>Email:</strong> <a href="mailto:support@artube.app?subject=Account%20Deletion%20Request%20-%20Artube">support@artube.app</a></li>
+          <li><strong>Subject Line:</strong> <code>Account Deletion Request - Artube</code></li>
+          <li><strong>Content:</strong> Include your registered email address and username. We will process your deletion request within 7 business days and confirm once completed.</li>
+          <li><strong>Web Page:</strong> You can also visit our dedicated <a href="delete-account.html">Account &amp; Data Deletion Portal</a>.</li>
+        </ul>
+      </div>
+
+      <!-- Section 10 -->
+      <h2 id="section-10" class="section-heading">
+        <span class="section-num">10.</span> Children’s Privacy (Under 13)
+      </h2>
+      <p>
+        Artube is a general audience creative platform intended for users aged <strong>13 and older</strong>. We do not knowingly collect, solicit, or maintain personal information from children under 13 years of age.
+      </p>
+      <p>
+        If we become aware that an account has been registered by a child under the age of 13 without verifiable parental consent, we will promptly delete that account and all associated information from our servers. If you believe a child under 13 has registered with Artube, please contact us immediately at <a href="mailto:support@artube.app">support@artube.app</a>.
+      </p>
+
+      <!-- Section 11 -->
+      <h2 id="section-11" class="section-heading">
+        <span class="section-num">11.</span> International Transfers &amp; Regional Rights
+      </h2>
+      <p>
+        Your information may be stored and processed on secure cloud servers located outside your jurisdiction. We take all appropriate security measures to ensure that your data is treated securely and in accordance with this Privacy Policy regardless of location.
+      </p>
+      <p>
+        Depending on your region (e.g., European Economic Area / GDPR, California / CCPA), you have the right to request access to the personal data we hold about you, request corrections, obtain an export of your information, or object to specific processing activities. To exercise any of these statutory rights, contact <a href="mailto:support@artube.app">support@artube.app</a>.
+      </p>
+
+      <!-- Section 12 -->
+      <h2 id="section-12" class="section-heading">
+        <span class="section-num">12.</span> Changes to This Privacy Policy
+      </h2>
+      <p>
+        We may update our Privacy Policy periodically to reflect enhancements to the Artube platform, emerging legal obligations, or Google Play policy modifications.
+      </p>
+      <p>
+        When updates occur, the revised policy will be posted on this URL with an updated &ldquo;Last Updated&rdquo; date at the top of the page. Significant changes will also be announced via in-app alerts. Your continued use of the Artube app after updates constitutes acceptance of the revised Privacy Policy.
+      </p>
+
+      <!-- Section 13 -->
+      <h2 id="section-13" class="section-heading">
+        <span class="section-num">13.</span> Contact &amp; Inquiries
+      </h2>
+      <p>
+        If you have any questions, grievances, or feedback concerning this Privacy Policy or your personal data, our dedicated support team is available to assist you:
+      </p>
+      <div class="callout callout-info" style="margin-bottom:0;">
+        <p style="margin-bottom:6px;"><strong>Artube Privacy &amp; Support Team</strong></p>
+        <p style="margin-bottom:6px;">Entity: <strong>ArtArtist</strong></p>
+        <p style="margin-bottom:6px;">Development: <strong>SkyWeb IT Solutions</strong></p>
+        <p style="margin-bottom:6px;">App ID: <strong><code>com.artube.app</code></strong></p>
+        <p style="margin-bottom:6px;">Official Email: <a href="mailto:support@artube.app">support@artube.app</a></p>
+        <p style="margin-bottom:0;">Website: <a href="https://artube.artartist.in" target="_blank" rel="noopener">https://artube.artartist.in</a></p>
+      </div>
+
+    </article>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-logos">
+        <img src="artartist-logo.png" alt="ArtArtist Logo" onerror="this.style.display='none';">
+        <img src="skyweb-logo.png" alt="SkyWeb Logo" onerror="this.style.display='none';">
+      </div>
+      <div class="footer-links">
+        <a href="privacy-policy.html">Privacy Policy</a>
+        <span>•</span>
+        <a href="terms-conditions.html">Terms &amp; Conditions</a>
+        <span>•</span>
+        <a href="delete-account.html">Account &amp; Data Deletion</a>
+      </div>
+      <p class="footer-copy">
+        &copy; 2026 ArtArtist. Developed by SkyWeb. All rights reserved.<br>
+        Artube (Package: <code>com.artube.app</code>) · Hosted publicly with SSL encryption.
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>

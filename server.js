@@ -1,4 +1,13 @@
 require('dotenv').config();
+const {
+  UploadValidationError,
+  normalizeUploadDescriptor,
+  validateIdempotencyKey,
+  createBunnyTusAuthorization,
+  createCloudinaryUploadTicket,
+  findOrCreateIdempotentSession,
+  toPublicUploadSession,
+} = require('./uploadSessionService');
 try {
   const dns = require('dns');
   dns.setServers(['8.8.8.8', '1.1.1.1']);
@@ -293,7 +302,23 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 app.use('/uploads', express.static(uploadsDir));
-app.use('/admin', express.static(path.join(__dirname, '../admin')));
+
+// Serve Admin UI (supports root workspace admin/dist, root admin, and backend admin)
+const adminDistRoot = path.resolve(__dirname, '../../../admin/dist');
+const adminDirRoot = path.resolve(__dirname, '../../../admin');
+const adminDirBackend = path.resolve(__dirname, '../admin');
+if (fs.existsSync(adminDistRoot)) {
+  app.use('/admin', express.static(adminDistRoot));
+  app.get(['/admin', '/admin/*'], (req, res, next) => {
+    if (req.path.startsWith('/admin/api') || req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(adminDistRoot, 'index.html'));
+  });
+} else if (fs.existsSync(adminDirRoot)) {
+  app.use('/admin', express.static(adminDirRoot));
+}
+if (fs.existsSync(adminDirBackend)) {
+  app.use('/admin', express.static(adminDirBackend));
+}
 
 // Connect to MongoDB
 const mongoURI = process.env.MONGODB_URI;
@@ -317,8 +342,9 @@ mongoose.connect(mongoURI, {
   minPoolSize: 2,
   serverSelectionTimeoutMS: 8000,
 })
-  .then(() => {
+  .then(async () => {
     console.log('Connected to MongoDB successfully');
+    await purgeImageOnlyContent();
     // NOTE: seedDatabase() intentionally removed — it deleted real user content on every restart.
     // To reset dev data, set DEV_SEED=true in .env and run: node seed.js
   })
@@ -704,6 +730,7 @@ const RadioChannel = mongoose.model('RadioChannel', RadioChannelSchema);
 const RADIO_FREQUENCY_PATTERN = /^\d{3}\.\d$/;
 const radioPresence = new Map(); // frequency -> userId -> Set(socketId)
 const radioBroadcasters = new Map(); // frequency -> { socketId, userId }
+const radioPodcasts = new Map(); // frequency -> { guestUserId, guestSocketId, pending }
 const radioRoomName = (frequency) => `radio:${frequency}`;
 const normalizeRadioFrequency = (value) => {
   const frequency = String(value ?? '').trim();
@@ -791,7 +818,51 @@ const emitRadioListenerCount = (frequency) => {
     listenerCount: getRadioListenerCount(frequency),
   });
 };
+const formatPodcastUser = (user, fallbackId) => ({
+  userId: user?._id ? String(user._id) : String(fallbackId || ''),
+  name: user?.displayName || user?.username || 'Listener',
+  username: user?.username || '',
+  avatarUrl: publicImageUrl(user?.avatarUrl),
+});
+const listRadioAudience = async (frequency) => {
+  const listeners = radioPresence.get(frequency);
+  if (!listeners || listeners.size === 0) return [];
+  const ids = [...listeners.keys()].filter((id) => id && !String(id).startsWith('listener_'));
+  const users = ids.length
+    ? await User.find({ _id: { $in: ids } }).select('displayName username avatarUrl').lean()
+    : [];
+  const byId = new Map(users.map((user) => [String(user._id), user]));
+  const list = [];
+  for (const [userId, sockets] of listeners.entries()) {
+    const socketId = sockets && sockets.size ? [...sockets][0] : null;
+    if (!socketId) continue;
+    const user = byId.get(String(userId));
+    list.push({
+      ...formatPodcastUser(user, userId),
+      socketId,
+      canInvite: Boolean(user),
+    });
+  }
+  return list;
+};
+const emitRadioAudience = async (frequency) => {
+  const broadcaster = radioBroadcasters.get(frequency);
+  if (!broadcaster) return;
+  const listeners = await listRadioAudience(frequency);
+  io.to(broadcaster.socketId).emit('radio:audience', {
+    frequency,
+    listeners,
+    listenerCount: listeners.length,
+  });
+};
+const clearRadioPodcast = (frequency, reason = 'ended') => {
+  const session = radioPodcasts.get(frequency);
+  if (!session) return;
+  radioPodcasts.delete(frequency);
+  io.to(radioRoomName(frequency)).emit('radio:podcast-ended', { frequency, reason });
+};
 const clearRadioListeners = (frequency) => {
+  clearRadioPodcast(frequency, 'broadcast-stopped');
   radioBroadcasters.delete(frequency);
   const listeners = radioPresence.get(frequency);
   if (listeners) {
@@ -942,6 +1013,21 @@ const removeRadioSocket = (socket) => {
     return;
   }
 
+  const podcast = radioPodcasts.get(frequency);
+  if (podcast && (podcast.guestSocketId === socket.id || podcast.guestUserId === userId)) {
+    clearRadioPodcast(frequency, 'guest-left');
+  }
+  if (podcast?.pending && (podcast.pending.toUserId === userId || podcast.pending.toSocketId === socket.id)) {
+    radioPodcasts.delete(frequency);
+    if (broadcaster) {
+      io.to(broadcaster.socketId).emit('radio:podcast-declined', {
+        frequency,
+        userId,
+        reason: 'left',
+      });
+    }
+  }
+
   if (broadcaster && broadcaster.socketId !== socket.id) {
     io.to(broadcaster.socketId).emit('radio:listener-left', {
       listenerSocketId: socket.id,
@@ -958,6 +1044,7 @@ const removeRadioSocket = (socket) => {
   socket.leave(radioRoomName(frequency));
   socket.data.radioFrequency = null;
   emitRadioListenerCount(frequency);
+  emitRadioAudience(frequency).catch(() => {});
 };
 
 io.use(async (socket, next) => {
@@ -1067,22 +1154,29 @@ io.on('connection', (socket) => {
 
       const broadcaster = radioBroadcasters.get(frequency);
       if (broadcaster && broadcaster.socketId !== socket.id) {
+        const joinedUser = socket.data.user;
         io.to(broadcaster.socketId).emit('radio:listener-joined', {
           listenerSocketId: socket.id,
           userId: socket.data.userId,
           frequency,
+          ...formatPodcastUser(joinedUser, socket.data.userId),
         });
       }
 
       if (typeof ack === 'function') {
+        const podcast = radioPodcasts.get(frequency);
         ack({
           ok: true,
           frequency,
           listenerCount: listeners.size,
           broadcasterSocketId: broadcaster ? broadcaster.socketId : null,
+          podcastGuest: podcast?.guestUserId
+            ? { userId: podcast.guestUserId, socketId: podcast.guestSocketId }
+            : null,
         });
       }
       emitRadioListenerCount(frequency);
+      emitRadioAudience(frequency).catch(() => {});
     } catch (err) {
       console.error('[Radio] Join failed:', err.message);
       sendRadioError(ack, 'JOIN_FAILED', 'Could not join this channel. Try again.');
@@ -1166,6 +1260,106 @@ io.on('connection', (socket) => {
     const listeners = frequency && radioPresence.get(frequency);
     const sockets = listeners?.get(socket.data.userId);
     if (!sockets?.has(socket.id)) return sendRadioError(ack, 'NOT_JOINED', 'Join a live channel before sending presence updates.');
+    if (typeof ack === 'function') ack({ ok: true, frequency });
+  });
+
+  socket.on('radio:podcast-invite', async (payload = {}, ack) => {
+    const frequency = normalizeRadioFrequency(payload.frequency || socket.data.radioFrequency);
+    const toUserId = String(payload.toUserId || '').trim();
+    if (!frequency) return sendRadioError(ack, 'INVALID_FREQUENCY', 'Enter a valid frequency.');
+    if (!toUserId) return sendRadioError(ack, 'INVALID_PAYLOAD', 'Choose a listener to invite.');
+    const broadcaster = radioBroadcasters.get(frequency);
+    if (!broadcaster || broadcaster.socketId !== socket.id) {
+      return sendRadioError(ack, 'FORBIDDEN', 'Only the live host can invite a podcast guest.');
+    }
+    const existing = radioPodcasts.get(frequency);
+    if (existing?.guestUserId) {
+      return sendRadioError(ack, 'PODCAST_FULL', 'This podcast already has a guest. Only 1 person can be invited.');
+    }
+    if (existing?.pending) {
+      return sendRadioError(ack, 'INVITE_PENDING', 'Wait for the current invite to be accepted or declined.');
+    }
+    if (toUserId === String(broadcaster.userId)) {
+      return sendRadioError(ack, 'INVALID_PAYLOAD', 'You are already the host of this podcast.');
+    }
+    const listenerSockets = radioPresence.get(frequency)?.get(toUserId);
+    if (!listenerSockets || listenerSockets.size === 0) {
+      return sendRadioError(ack, 'NOT_LISTENING', 'That person is not tuned into your frequency.');
+    }
+    const toSocketId = [...listenerSockets][0];
+    const guestUser = await User.findById(toUserId).select('displayName username avatarUrl').lean().catch(() => null);
+    const hostUser = socket.data.user;
+    radioPodcasts.set(frequency, {
+      pending: {
+        toUserId,
+        toSocketId,
+        fromUserId: String(broadcaster.userId),
+        createdAt: Date.now(),
+      },
+    });
+    const invite = {
+      frequency,
+      hostUserId: String(broadcaster.userId),
+      hostName: hostUser?.displayName || hostUser?.username || 'Artist',
+      hostUsername: hostUser?.username || '',
+      hostAvatar: publicImageUrl(hostUser?.avatarUrl),
+      guest: formatPodcastUser(guestUser, toUserId),
+    };
+    io.to(toSocketId).emit('radio:podcast-invite', invite);
+    io.to(`user:${toUserId}`).emit('radio:podcast-invite', invite);
+    if (typeof ack === 'function') ack({ ok: true, frequency, pending: true, guest: invite.guest });
+  });
+
+  socket.on('radio:podcast-respond', async (payload = {}, ack) => {
+    const frequency = normalizeRadioFrequency(payload.frequency || socket.data.radioFrequency);
+    const accept = payload.accept === true;
+    if (!frequency) return sendRadioError(ack, 'INVALID_FREQUENCY', 'Enter a valid frequency.');
+    const session = radioPodcasts.get(frequency);
+    const pending = session?.pending;
+    if (!pending || pending.toUserId !== String(socket.data.userId)) {
+      return sendRadioError(ack, 'NO_INVITE', 'This podcast invite is no longer available.');
+    }
+    const broadcaster = radioBroadcasters.get(frequency);
+    if (!broadcaster) {
+      radioPodcasts.delete(frequency);
+      return sendRadioError(ack, 'CHANNEL_OFFLINE', 'The host is no longer live.');
+    }
+    if (!accept) {
+      radioPodcasts.delete(frequency);
+      io.to(broadcaster.socketId).emit('radio:podcast-declined', {
+        frequency,
+        userId: socket.data.userId,
+      });
+      if (typeof ack === 'function') ack({ ok: true, accepted: false, frequency });
+      return;
+    }
+    const guestUser = socket.data.user;
+    radioPodcasts.set(frequency, {
+      guestUserId: String(socket.data.userId),
+      guestSocketId: socket.id,
+    });
+    const guest = formatPodcastUser(guestUser, socket.data.userId);
+    const started = {
+      frequency,
+      guestSocketId: socket.id,
+      guest: { ...guest, socketId: socket.id },
+    };
+    io.to(broadcaster.socketId).emit('radio:podcast-accepted', started);
+    io.to(radioRoomName(frequency)).emit('radio:podcast-started', started);
+    if (typeof ack === 'function') ack({ ok: true, accepted: true, frequency, guest });
+  });
+
+  socket.on('radio:podcast-end', (payload = {}, ack) => {
+    const frequency = normalizeRadioFrequency(payload.frequency || socket.data.radioFrequency);
+    if (!frequency) return sendRadioError(ack, 'INVALID_FREQUENCY', 'Enter a valid frequency.');
+    const session = radioPodcasts.get(frequency);
+    const broadcaster = radioBroadcasters.get(frequency);
+    const isHost = broadcaster && broadcaster.socketId === socket.id;
+    const isGuest = session && (session.guestSocketId === socket.id || session.guestUserId === socket.data.userId);
+    if (!isHost && !isGuest) {
+      return sendRadioError(ack, 'FORBIDDEN', 'Only the host or guest can end this podcast.');
+    }
+    clearRadioPodcast(frequency, isHost ? 'host-ended' : 'guest-ended');
     if (typeof ack === 'function') ack({ ok: true, frequency });
   });
 
@@ -1311,9 +1505,20 @@ app.get('/api/radio/channels/:frequency/listeners', async (req, res) => {
   const frequency = normalizeRadioFrequency(req.params.frequency);
   if (!frequency) return res.status(400).json({ error: 'Enter a valid radio frequency.' });
   try {
-    const channel = await RadioChannel.findOne({ frequency }).select('_id frequency');
+    const channel = await RadioChannel.findOne({ frequency }).select('_id frequency ownerId');
     if (!channel) return res.status(404).json({ error: 'No Artwave Radio channel uses this frequency.' });
-    res.json({ frequency, listenerCount: getRadioListenerCount(frequency) });
+    const payload = {
+      frequency,
+      listenerCount: getRadioListenerCount(frequency),
+      listeners: [],
+    };
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    const user = await findRadioUserFromToken(token);
+    if (user && String(channel.ownerId) === String(user._id)) {
+      payload.listeners = await listRadioAudience(frequency);
+    }
+    res.json(payload);
   } catch (_err) {
     res.status(500).json({ error: 'Could not load listener presence.' });
   }
@@ -1408,10 +1613,12 @@ const PostSchema = new mongoose.Schema({
   time: { type: String, default: 'Just now' },
   likesCount: { type: Number, default: 0 },
   isLiked: { type: Boolean, default: false },
-  description: { type: String, default: '' },
+  description: { type: String, default: '', maxlength: 1000 },
   tutorialDuration: { type: String, default: '' },
   tutorialLessons: { type: String, default: '' },
-  medium: { type: String, default: '' },
+  medium: { type: String, default: '', maxlength: 60 },
+  tools: { type: String, default: '', maxlength: 60 },
+  tool: { type: String, default: '', maxlength: 60 },
   attachedCourse: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', default: null },
   visibility: { type: String, default: 'public' },
   scheduledTime: { type: Date, default: null },
@@ -1422,7 +1629,21 @@ const PostSchema = new mongoose.Schema({
     text: { type: String, required: true },
     createdAt: { type: Date, default: Date.now },
     editedAt: { type: Date, default: null },
+    likesCount: { type: Number, default: 0 },
+    likedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    replies: [{
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      author: { type: String, default: 'Anonymous' },
+      avatarUrl: { type: String, default: '' },
+      text: { type: String, required: true },
+      createdAt: { type: Date, default: Date.now },
+      likesCount: { type: Number, default: 0 },
+      likedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    }],
   }],
+  isBold: { type: Boolean, default: false },
+  titleWeight: { type: String, default: '600' },
+  titleColor: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
 });
 PostSchema.index({ userId: 1, visibility: 1, createdAt: -1 });
@@ -1504,6 +1725,10 @@ const CourseSchema = new mongoose.Schema({
     title: { type: String, default: '' },
     duration: { type: String, default: '10:00' },
     mediaUrl: { type: String, default: '' },
+    mp4Url: { type: String, default: '' },
+    hlsUrl: { type: String, default: '' },
+    bunnyVideoId: { type: String, default: '' },
+    thumbnailUrl: { type: String, default: '' },
     mediaType: { type: String, default: 'video' },
     isCompleted: { type: Boolean, default: false }
   }],
@@ -1513,6 +1738,154 @@ const CourseSchema = new mongoose.Schema({
 CourseSchema.index({ userId: 1, createdAt: -1 });
 CourseSchema.index({ visibility: 1, createdAt: -1 });
 const Course = mongoose.model('Course', CourseSchema);
+
+// 5. App Branding & Logo Configuration Schema
+const AppConfigSchema = new mongoose.Schema({
+  key: { type: String, default: 'main', unique: true },
+  logoType: { type: String, enum: ['text', 'image'], default: 'text' },
+  logoText: { type: String, default: 'Artube' },
+  logoPrefix: { type: String, default: 'Art' },
+  logoSuffix: { type: String, default: 'ube' },
+  logoPrefixColor: { type: String, default: '#B31E1B' },
+  logoSuffixColor: { type: String, default: '#101828' },
+  logoImageUrl: { type: String, default: '' },
+  appName: { type: String, default: 'Artube' },
+  updatedAt: { type: Date, default: Date.now },
+});
+const AppConfig = mongoose.model('AppConfig', AppConfigSchema);
+
+// Direct provider uploads are introduced behind a feature flag so this API can
+// be deployed without changing the current mobile multipart flow.
+const UploadSessionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  idempotencyKey: { type: String, required: true },
+  requestHash: { type: String, required: true },
+  provider: { type: String, enum: ['bunny', 'cloudinary'], required: true },
+  mediaType: { type: String, enum: ['video', 'image'], required: true },
+  purpose: { type: String, required: true },
+  originalName: { type: String, required: true },
+  mimeType: { type: String, required: true },
+  sizeBytes: { type: Number, required: true },
+  title: { type: String, default: '' },
+  status: { type: String, enum: ['pending', 'uploading', 'processing', 'ready', 'failed', 'expired'], default: 'pending' },
+  providerAssetId: { type: String },
+  providerMetadata: { type: mongoose.Schema.Types.Mixed, default: null },
+  providerVideoId: { type: String, default: '' },
+  failureCode: { type: String, default: '' },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+UploadSessionSchema.index({ userId: 1, idempotencyKey: 1 }, { unique: true });
+UploadSessionSchema.index({ providerAssetId: 1 }, { unique: true, sparse: true });
+UploadSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+const UploadSession = mongoose.model('UploadSession', UploadSessionSchema);
+
+const directUploadsEnabled = () => process.env.DIRECT_MEDIA_UPLOAD_ENABLED === 'true';
+const requireDirectUploadsEnabled = (req, res, next) => {
+  if (!directUploadsEnabled()) return res.status(503).json({ error: 'Direct uploads are not enabled.', code: 'direct_uploads_disabled' });
+  return next();
+};
+
+const getOwnedUploadSession = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.uploadId)) {
+    res.status(404).json({ error: 'Upload session not found.' });
+    return null;
+  }
+  const session = await UploadSession.findOne({ _id: req.params.uploadId, userId: req.user._id });
+  if (!session) {
+    res.status(404).json({ error: 'Upload session not found.' });
+    return null;
+  }
+  return session;
+};
+
+app.post('/api/uploads/bunny/init', authenticateUser, requireDirectUploadsEnabled, async (req, res) => {
+  try {
+    const descriptor = normalizeUploadDescriptor(req.body, 'video');
+    const idempotencyKey = validateIdempotencyKey(req.get('Idempotency-Key'));
+    const { libraryId, apiKey } = getBunnyStreamConfig();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    let { session } = await findOrCreateIdempotentSession({ UploadSession, userId: req.user._id, idempotencyKey, descriptor, expiresAt, provider: 'bunny' });
+
+    if (session.provider && session.provider !== 'bunny') {
+      return res.status(409).json({ error: 'This upload key belongs to another provider.', code: 'idempotency_conflict' });
+    }
+    if (!session.providerVideoId) {
+      const response = await fetch(`https://video.bunnycdn.com/library/${libraryId}/videos`, {
+        method: 'POST',
+        headers: { AccessKey: apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ title: descriptor.title || descriptor.originalName }),
+      });
+      if (!response.ok) throw new Error(`Bunny video creation failed (${response.status}).`);
+      const video = await response.json();
+      if (!video.guid) throw new Error('Bunny response did not include a video GUID.');
+      session.provider = 'bunny';
+      session.providerVideoId = String(video.guid);
+      session.status = 'uploading';
+      await session.save();
+    }
+
+    const expiry = Math.floor(Date.now() / 1000) + 60 * 60;
+    const authorization = createBunnyTusAuthorization({ libraryId, apiKey, expiresAt: expiry, videoId: session.providerVideoId });
+    return res.status(200).json({ ...toPublicUploadSession(session), provider: 'bunny', authorization, metadata: { filetype: descriptor.mimeType, title: descriptor.title || descriptor.originalName } });
+  } catch (error) {
+    const status = error instanceof UploadValidationError ? error.status : 502;
+    if (status >= 500) console.error('[direct-upload] Bunny session initialization failed:', error.message);
+    return res.status(status).json({ error: status >= 500 ? 'Could not initialize Bunny upload.' : error.message, code: error.code || 'provider_error' });
+  }
+});
+
+app.post('/api/uploads/cloudinary/init', authenticateUser, requireDirectUploadsEnabled, async (req, res) => {
+  try {
+    const descriptor = normalizeUploadDescriptor(req.body, 'image');
+    const idempotencyKey = validateIdempotencyKey(req.get('Idempotency-Key'));
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const { session } = await findOrCreateIdempotentSession({ UploadSession, userId: req.user._id, idempotencyKey, descriptor, expiresAt, provider: 'cloudinary' });
+    if (session.provider && session.provider !== 'cloudinary') {
+      return res.status(409).json({ error: 'This upload key belongs to another provider.', code: 'idempotency_conflict' });
+    }
+    session.provider = 'cloudinary';
+    session.status = 'uploading';
+    await session.save();
+    const ticket = createCloudinaryUploadTicket({
+      cloudinary,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      apiSecret: process.env.CLOUDINARY_API_SECRET,
+      folder: process.env.CLOUDINARY_FOLDER || 'artube/uploads',
+      session,
+    });
+    return res.status(200).json({ ...toPublicUploadSession(session), provider: 'cloudinary', upload: ticket });
+  } catch (error) {
+    const status = error instanceof UploadValidationError ? error.status : 503;
+    if (status >= 500) console.error('[direct-upload] Cloudinary session initialization failed:', error.message);
+    return res.status(status).json({ error: status >= 500 ? 'Could not initialize Cloudinary upload.' : error.message, code: error.code || 'provider_error' });
+  }
+});
+
+app.post('/api/uploads/:uploadId/refresh-authorization', authenticateUser, requireDirectUploadsEnabled, async (req, res) => {
+  try {
+    const session = await getOwnedUploadSession(req, res);
+    if (!session) return;
+    if (session.provider !== 'bunny' || !session.providerVideoId || ['ready', 'failed', 'expired'].includes(session.status)) {
+      return res.status(409).json({ error: 'This session cannot receive new Bunny authorization.', code: 'invalid_upload_state' });
+    }
+    const { libraryId, apiKey } = getBunnyStreamConfig();
+    const expiry = Math.floor(Date.now() / 1000) + 60 * 60;
+    const authorization = createBunnyTusAuthorization({ libraryId, apiKey, expiresAt: expiry, videoId: session.providerVideoId });
+    return res.json({ uploadId: String(session._id), authorization, metadata: { filetype: session.mimeType, title: session.title || session.originalName } });
+  } catch (error) {
+    return res.status(503).json({ error: 'Could not refresh Bunny authorization.' });
+  }
+});
+
+app.get('/api/uploads/:uploadId', authenticateUser, async (req, res) => {
+  try {
+    const session = await getOwnedUploadSession(req, res);
+    if (session) return res.json(toPublicUploadSession(session));
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not read upload status.' });
+  }
+});
 
 // 5. Community Schema
 const CommunitySchema = new mongoose.Schema({
@@ -1651,7 +2024,7 @@ const sendPushToUser = async (userId, { title, body, data }) => {
         title: title || 'Artube',
         body: body || '',
         data: data || {},
-        channelId: 'artube-alerts',
+        channelId: 'artube-alerts-v2',
         priority: 'high',
         badge: 1,
         ttl: 3600,
@@ -1660,7 +2033,7 @@ const sendPushToUser = async (userId, { title, body, data }) => {
 
     if (messages.length === 0) return;
 
-    await fetch('https://exp.host/--/api/v2/push/send', {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
@@ -1669,6 +2042,17 @@ const sendPushToUser = async (userId, { title, body, data }) => {
       },
       body: JSON.stringify(messages),
     });
+
+    const result = await res.json().catch(() => null);
+    if (result && Array.isArray(result.data)) {
+      result.data.forEach((ticket, idx) => {
+        if (ticket.status === 'error') {
+          console.warn(`[PushNotification] Push delivery failed for token ${messages[idx]?.to}: ${ticket.message} (${ticket.details?.error || 'unknown error'})`);
+        } else {
+          console.log(`[PushNotification] Push delivered to ${messages[idx]?.to} (ticket: ${ticket.id})`);
+        }
+      });
+    }
   } catch (err) {
     console.warn('[PushNotification] Error sending push notification:', err.message);
   }
@@ -1692,8 +2076,9 @@ async function createAndDispatchNotification({
 }) {
   try {
     if (!userId) return null;
-    if (actorId && String(userId) === String(actorId)) {
-      // Do not notify oneself
+    const allowSelfNotify = process.env.ALLOW_SELF_NOTIFY === 'true';
+    if (actorId && String(userId) === String(actorId) && !allowSelfNotify) {
+      // Do not notify oneself in production unless ALLOW_SELF_NOTIFY is enabled
       return null;
     }
 
@@ -1875,6 +2260,115 @@ async function onAfterItemCreated(Model, item, creatorUser) {
   }
 }
 
+const IMAGE_ONLY_POST_FILTER = {
+  $and: [
+    {
+      $or: [
+        { mediaType: 'image' },
+        { mediaType: { $nin: ['video', 'mixed'] } },
+      ],
+    },
+    { $or: [{ bunnyVideoId: { $exists: false } }, { bunnyVideoId: null }, { bunnyVideoId: '' }] },
+    { $or: [{ hlsUrl: { $exists: false } }, { hlsUrl: null }, { hlsUrl: '' }] },
+    { $or: [{ mp4Url: { $exists: false } }, { mp4Url: null }, { mp4Url: '' }] },
+    {
+      $or: [
+        { mediaUrl: { $exists: false } },
+        { mediaUrl: null },
+        { mediaUrl: '' },
+        { mediaUrl: { $not: /\.mp4($|\?)|\.m3u8($|\?)|b-cdn\.net/i } },
+      ],
+    },
+  ],
+};
+
+const VIDEO_POST_FILTER = {
+  $or: [
+    { mediaType: 'video' },
+    { mediaType: 'mixed' },
+    { type: 'watch' },
+    { bunnyVideoId: { $exists: true, $nin: [null, ''] } },
+    { hlsUrl: { $exists: true, $nin: [null, ''] } },
+    { mp4Url: { $exists: true, $nin: [null, ''] } },
+    { mediaUrl: { $regex: /\.mp4|\.m3u8|b-cdn\.net/i } },
+  ],
+};
+
+async function ingestUploadedVideos(req, data, { allowMultiple = false } = {}) {
+  const videoLessons = [];
+  const uploadedFiles = req.files?.file || [];
+  for (const file of uploadedFiles) {
+    if (!file?.size || !isVideoFile(file)) continue;
+    const bRes = await uploadVideoToBunnyStream(file, data.title || file.originalname);
+    videoLessons.push({
+      id: String(videoLessons.length + 1),
+      title: allowMultiple ? `Lesson ${videoLessons.length + 1}` : (data.title || file.originalname),
+      duration: data.duration || data.videoDuration || '',
+      mediaUrl: bRes.mediaUrl,
+      mp4Url: bRes.mp4Url,
+      hlsUrl: bRes.hlsUrl,
+      bunnyVideoId: bRes.guid,
+      thumbnailUrl: bRes.thumbnailUrl,
+      mediaType: 'video',
+      isCompleted: false,
+    });
+    if (videoLessons.length === 1) {
+      data.mediaUrl = bRes.mediaUrl;
+      data.hlsUrl = bRes.hlsUrl;
+      data.mp4Url = bRes.mp4Url;
+      data.previewUrl = bRes.previewUrl;
+      data.embedUrl = bRes.embedUrl;
+      data.bunnyVideoId = bRes.guid;
+      data.bunnyLibraryId = bRes.libraryId;
+      data.proxyUrl = `/api/bunny/stream/${bRes.guid}/play.mp4`;
+      if (!data.thumbnailUrl) {
+        data.thumbnailUrl = bRes.thumbnailUrl;
+        data.image = bRes.thumbnailUrl;
+      }
+    }
+    if (!allowMultiple) break;
+  }
+
+  data.mediaType = 'video';
+  data.images = [];
+  data.relatedImages = [];
+  data.mediaUrls = [];
+
+  if (allowMultiple && videoLessons.length > 0) {
+    const existingLessons = Array.isArray(data.lessons) ? data.lessons : [];
+    data.lessons = videoLessons.map((lesson, idx) => ({
+      ...lesson,
+      title: (existingLessons[idx] && existingLessons[idx].title) || lesson.title,
+      duration: (existingLessons[idx] && existingLessons[idx].duration) || lesson.duration,
+    }));
+  }
+  return videoLessons;
+}
+
+async function purgeImageOnlyContent() {
+  try {
+    const deletedPosts = await Post.deleteMany(IMAGE_ONLY_POST_FILTER);
+    const strippedPosts = await Post.updateMany(
+      {
+        $or: [
+          { mediaType: 'mixed' },
+          { images: { $exists: true, $not: { $size: 0 } } },
+        ],
+      },
+      { $set: { mediaType: 'video', images: [], relatedImages: [], mediaUrls: [] } }
+    );
+    const strippedCourses = await Course.updateMany(
+      {},
+      { $set: { images: [], relatedImages: [] } }
+    );
+    console.log(
+      `[Artube] Purged image posts: deleted=${deletedPosts.deletedCount} strippedPosts=${strippedPosts.modifiedCount} strippedCourses=${strippedCourses.modifiedCount}`
+    );
+  } catch (err) {
+    console.warn('[Artube] Failed to purge image-only content:', err.message);
+  }
+}
+
 // Helper function to generate endpoints for a Mongoose Model
 function makeCrudEndpoints(routePath, Model, hasUpload = false) {
   // GET all items — supports optional ?visibility=private&author=xyz&userId=abc filters
@@ -1907,6 +2401,10 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       }
 
       if (req.query.author) filter.author = req.query.author;
+
+      if (Model.modelName === 'Post') {
+        andClauses.push(VIDEO_POST_FILTER);
+      }
       
       if (requestedUserId) {
         if (requestedUser) {
@@ -1965,16 +2463,42 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         if (item.bunnyVideoId || (item.mediaUrl && item.mediaUrl.includes('b-cdn.net'))) {
           const guid = item.bunnyVideoId || (item.mediaUrl.match(/vz-[^/]+\.b-cdn\.net\/([^/]+)/) || [])[1];
           if (guid) {
+            const cdnHostname = process.env.BUNNY_STREAM_CDN_HOSTNAME ||
+              (item.mediaUrl && (item.mediaUrl.match(/https?:\/\/([^/]+)/) || [])[1]) ||
+              'vz-8767b2d8-441.b-cdn.net';
             item.proxyUrl = `/api/bunny/stream/${guid}/play.mp4`;
             item.hlsProxyUrl = `/api/bunny/stream/${guid}/playlist.m3u8`;
-            if ((!item.mp4Url || item.mp4Url.includes('play_720p.mp4')) && process.env.BUNNY_STREAM_CDN_HOSTNAME) {
-              item.mp4Url = `https://${process.env.BUNNY_STREAM_CDN_HOSTNAME}/${guid}/play.mp4`;
+            if (!item.mp4Url || item.mp4Url.includes('play_720p.mp4')) {
+              item.mp4Url = `https://${cdnHostname}/${guid}/play.mp4`;
             }
-            if ((!item.thumbnailUrl || item.thumbnailUrl.endsWith('.mp4') || item.thumbnailUrl.endsWith('.m3u8')) && process.env.BUNNY_STREAM_CDN_HOSTNAME) {
-              item.thumbnailUrl = `https://${process.env.BUNNY_STREAM_CDN_HOSTNAME}/${guid}/thumbnail.jpg`;
+            if (!item.thumbnailUrl || item.thumbnailUrl.endsWith('.mp4') || item.thumbnailUrl.endsWith('.m3u8')) {
+              item.thumbnailUrl = `https://${cdnHostname}/${guid}/thumbnail.jpg`;
               item.image = item.thumbnailUrl;
             }
           }
+        }
+
+        // Ensure image and thumbnailUrl are always mirrored, populated, and fully resolved
+        if (!item.thumbnailUrl && item.mediaType !== 'video' && item.mediaUrl) {
+          item.thumbnailUrl = item.mediaUrl;
+        }
+        if (!item.thumbnailUrl && Array.isArray(item.images) && item.images.length > 0) {
+          item.thumbnailUrl = item.images[0];
+        }
+        if (!item.image && item.thumbnailUrl) {
+          item.image = item.thumbnailUrl;
+        }
+        if (!item.thumbnailUrl && item.image) {
+          item.thumbnailUrl = item.image;
+        }
+        if (item.thumbnailUrl) {
+          item.thumbnailUrl = makeMediaUrlPublic(req, item.thumbnailUrl);
+        }
+        if (item.image) {
+          item.image = makeMediaUrlPublic(req, item.image);
+        }
+        if (item.mediaUrl) {
+          item.mediaUrl = makeMediaUrlPublic(req, item.mediaUrl);
         }
         item.duration = item.duration || item.videoDuration || '';
         item.videoDuration = item.duration;
@@ -2124,6 +2648,28 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
           return cObj;
         });
       }
+      if (!item.thumbnailUrl && item.mediaType !== 'video' && item.mediaUrl) {
+        item.thumbnailUrl = item.mediaUrl;
+      }
+      if (!item.thumbnailUrl && Array.isArray(item.images) && item.images.length > 0) {
+        item.thumbnailUrl = item.images[0];
+      }
+      if (!item.image && item.thumbnailUrl) {
+        item.image = item.thumbnailUrl;
+      }
+      if (!item.thumbnailUrl && item.image) {
+        item.thumbnailUrl = item.image;
+      }
+      if (item.thumbnailUrl) {
+        item.thumbnailUrl = makeMediaUrlPublic(req, item.thumbnailUrl);
+      }
+      if (item.image) {
+        item.image = makeMediaUrlPublic(req, item.image);
+      }
+      if (item.mediaUrl) {
+        item.mediaUrl = makeMediaUrlPublic(req, item.mediaUrl);
+      }
+
       if (Model.modelName === 'Post') {
         const likedIds = (req.user?.likedPosts || []).map((id) => String(id));
         item.isLiked = likedIds.includes(String(item._id));
@@ -2187,50 +2733,14 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         else { data.level = 'Beginner'; data.difficulty = 'Beginner'; }
       }
 
-      // If files uploaded, upload to Bunny Stream (for videos) or Cloudinary (for images)
+      // Videos + optional thumbnail only. Extra image files are ignored.
       if (req.files) {
         if (req.files['file'] && req.files['file'].length > 0) {
-          const imageUrls = [];
-          let hasVideo = false;
-          for (const file of req.files['file']) {
-            if (file.size > 0) {
-              if (isVideoFile(file)) {
-                hasVideo = true;
-                const bRes = await uploadVideoToBunnyStream(file, data.title || file.originalname);
-                data.mediaUrl = bRes.mediaUrl;
-                data.hlsUrl = bRes.hlsUrl;
-                data.mp4Url = bRes.mp4Url;
-                data.previewUrl = bRes.previewUrl;
-                data.embedUrl = bRes.embedUrl;
-                data.bunnyVideoId = bRes.guid;
-                data.bunnyLibraryId = bRes.libraryId;
-                data.proxyUrl = `/api/bunny/stream/${bRes.guid}/play.mp4`;
-                if (!data.thumbnailUrl) {
-                  data.thumbnailUrl = bRes.thumbnailUrl;
-                  data.image = bRes.thumbnailUrl;
-                }
-                data.mediaType = 'video';
-              } else {
-                const url = await uploadToCloudinary(file);
-                imageUrls.push(url);
-              }
-            }
-          }
-          data.images = imageUrls;
-          data.relatedImages = imageUrls;
-          if (hasVideo) {
-            data.mediaType = imageUrls.length > 0 ? 'mixed' : 'video';
-            data.mediaUrls = imageUrls; // Only additional images in mediaUrls so thumbnail isn't duplicated
-          } else {
-            data.mediaUrls = imageUrls;
-            data.mediaUrl = imageUrls[0] || '';
-            if (!data.thumbnailUrl) {
-              data.thumbnailUrl = imageUrls[0] || '';
-              data.image = imageUrls[0] || '';
-            }
-            data.mediaType = 'image';
-            data.duration = '';
-            data.videoDuration = '';
+          const videoLessons = await ingestUploadedVideos(req, data, {
+            allowMultiple: Model.modelName === 'Course',
+          });
+          if ((Model.modelName === 'Post' || Model.modelName === 'Course') && videoLessons.length === 0) {
+            return res.status(400).json({ error: 'Artube only accepts videos. Add a video (thumbnails are separate).' });
           }
         }
         if (req.files['extraFile'] && req.files['extraFile'][0] && req.files['extraFile'][0].size > 0) {
@@ -2239,10 +2749,6 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
             const bRes = await uploadVideoToBunnyStream(extraFile, (data.title || '') + ' Extra');
             data.extraMediaUrl = bRes.mediaUrl;
             data.extraMediaType = 'video';
-          } else {
-            const extraMediaUrl = await uploadToCloudinary(extraFile);
-            data.extraMediaUrl = extraMediaUrl;
-            data.extraMediaType = 'image';
           }
         }
         if (req.files['thumbnailFile'] && req.files['thumbnailFile'][0] && req.files['thumbnailFile'][0].size > 0) {
@@ -2352,6 +2858,17 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         }
       }
 
+      if (typeof data.description === 'string') {
+        const descMax = Model.modelName === 'Course' ? 1000 : 400;
+        data.description = data.description.trim().slice(0, descMax);
+      }
+      if (typeof data.title === 'string') {
+        data.title = data.title.trim().slice(0, 80);
+      }
+      data.medium = String(data.medium || '').trim().slice(0, 60);
+      data.tools = String(data.tools || data.tool || '').trim().slice(0, 60);
+      data.tool = data.tools;
+
       const item = new Model(data);
       await item.save();
       await onAfterItemCreated(Model, item, req.user);
@@ -2403,50 +2920,14 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         else { data.level = 'Beginner'; data.difficulty = 'Beginner'; }
       }
 
-      // If files uploaded, upload to Bunny Stream (for videos) or Cloudinary (for images)
+      // Videos + optional thumbnail only. Extra image files are ignored.
       if (req.files) {
         if (req.files['file'] && req.files['file'].length > 0) {
-          const imageUrls = [];
-          let hasVideo = false;
-          for (const file of req.files['file']) {
-            if (file.size > 0) {
-              if (isVideoFile(file)) {
-                hasVideo = true;
-                const bRes = await uploadVideoToBunnyStream(file, data.title || file.originalname);
-                data.mediaUrl = bRes.mediaUrl;
-                data.hlsUrl = bRes.hlsUrl;
-                data.mp4Url = bRes.mp4Url;
-                data.previewUrl = bRes.previewUrl;
-                data.embedUrl = bRes.embedUrl;
-                data.bunnyVideoId = bRes.guid;
-                data.bunnyLibraryId = bRes.libraryId;
-                data.proxyUrl = `/api/bunny/stream/${bRes.guid}/play.mp4`;
-                if (!data.thumbnailUrl) {
-                  data.thumbnailUrl = bRes.thumbnailUrl;
-                  data.image = bRes.thumbnailUrl;
-                }
-                data.mediaType = 'video';
-              } else {
-                const url = await uploadToCloudinary(file);
-                imageUrls.push(url);
-              }
-            }
-          }
-          data.images = imageUrls;
-          data.relatedImages = imageUrls;
-          if (hasVideo) {
-            data.mediaType = imageUrls.length > 0 ? 'mixed' : 'video';
-            data.mediaUrls = imageUrls; // Only additional images in mediaUrls so thumbnail isn't duplicated
-          } else {
-            data.mediaUrls = imageUrls;
-            data.mediaUrl = imageUrls[0] || '';
-            if (!data.thumbnailUrl) {
-              data.thumbnailUrl = imageUrls[0] || '';
-              data.image = imageUrls[0] || '';
-            }
-            data.mediaType = 'image';
-            data.duration = '';
-            data.videoDuration = '';
+          const videoLessons = await ingestUploadedVideos(req, data, {
+            allowMultiple: Model.modelName === 'Course',
+          });
+          if ((Model.modelName === 'Post' || Model.modelName === 'Course') && videoLessons.length === 0) {
+            return res.status(400).json({ error: 'Artube only accepts videos. Add a video (thumbnails are separate).' });
           }
         }
         if (req.files['extraFile'] && req.files['extraFile'][0] && req.files['extraFile'][0].size > 0) {
@@ -2455,10 +2936,6 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
             const bRes = await uploadVideoToBunnyStream(extraFile, (data.title || '') + ' Extra');
             data.extraMediaUrl = bRes.mediaUrl;
             data.extraMediaType = 'video';
-          } else {
-            const extraMediaUrl = await uploadToCloudinary(extraFile);
-            data.extraMediaUrl = extraMediaUrl;
-            data.extraMediaType = 'image';
           }
         }
         if (req.files['thumbnailFile'] && req.files['thumbnailFile'][0] && req.files['thumbnailFile'][0].size > 0) {
@@ -2743,21 +3220,65 @@ app.delete('/api/users/push-token', authenticateUser, async (req, res) => {
 // --- NOTIFICATION API ENDPOINTS ---
 // ==========================================
 
-// GET /api/notifications - Retrieve authenticated user's notifications with pagination
-app.get('/api/notifications', authenticateUser, async (req, res) => {
+// POST /api/notifications/test - Trigger an immediate test notification (both WS + Push)
+app.post('/api/notifications/test', authenticateIfProvided, async (req, res) => {
+  try {
+    const { title, text, type, targetUserId } = req.body || {};
+    let targetUser = req.user;
+    if (!targetUser) {
+      if (targetUserId && mongoose.isValidObjectId(targetUserId)) {
+        targetUser = await User.findById(targetUserId);
+      }
+      if (!targetUser) {
+        // Fallback to user with registered push tokens or first user
+        targetUser = await User.findOne({ 'pushTokens.0': { $exists: true } }) || await User.findOne();
+      }
+    }
+    if (!targetUser) {
+      return res.status(404).json({ error: 'No user found in database to dispatch test notification to.' });
+    }
+    const notif = await createAndDispatchNotification({
+      userId: targetUser._id,
+      actorId: null, // self test / system alert
+      user: targetUser.displayName || targetUser.username || 'System Test',
+      avatarUrl: targetUser.avatarUrl || '',
+      type: type || 'comment',
+      title: title || 'Test Notification',
+      action: 'sent a test alert',
+      text: text || 'This is a test notification confirming app and background alerts work!',
+    });
+    const userWithTokens = await User.findById(targetUser._id).select('pushTokens');
+    const registeredTokens = (userWithTokens?.pushTokens || []).map((t) => t.token);
+    res.json({
+      success: true,
+      message: 'Test notification triggered.',
+      notification: notif,
+      pushTokensRegistered: registeredTokens.length,
+      tokens: registeredTokens,
+      recipientUser: targetUser.username || targetUser.displayName || String(targetUser._id),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to trigger test notification.' });
+  }
+});
+
+// GET /api/notifications - Retrieve authenticated user's notifications, or all notifications for admin
+app.get('/api/notifications', authenticateIfProvided, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip = (page - 1) * limit;
 
+    const filter = req.user ? { userId: req.user._id } : {};
+
     const [notifications, total, unreadCount] = await Promise.all([
-      Notification.find({ userId: req.user._id })
+      Notification.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      Notification.countDocuments({ userId: req.user._id }),
-      Notification.countDocuments({ userId: req.user._id, unread: true }),
+      Notification.countDocuments(filter),
+      Notification.countDocuments({ ...filter, unread: true }),
     ]);
 
     res.json({
@@ -2823,17 +3344,21 @@ const handleMarkAllNotificationsRead = async (req, res) => {
 app.patch('/api/notifications/read-all', authenticateUser, handleMarkAllNotificationsRead);
 app.put('/api/notifications/read-all', authenticateUser, handleMarkAllNotificationsRead);
 
-// DELETE /api/notifications/:id - Delete single notification belonging to user
-app.delete('/api/notifications/:id', authenticateUser, async (req, res) => {
+// DELETE /api/notifications/:id - Delete single notification belonging to user or via admin
+app.delete('/api/notifications/:id', authenticateIfProvided, async (req, res) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ error: 'Invalid notification ID.' });
     }
-    const deleted = await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+    const deleteQuery = req.user && req.user.role !== 'admin'
+      ? { _id: req.params.id, userId: req.user._id }
+      : { _id: req.params.id };
+
+    const deleted = await Notification.findOneAndDelete(deleteQuery);
     if (!deleted) {
       return res.status(404).json({ error: 'Notification not found.' });
     }
-    const unreadCount = await Notification.countDocuments({ userId: req.user._id, unread: true });
+    const unreadCount = req.user ? await Notification.countDocuments({ userId: req.user._id, unread: true }) : 0;
     res.json({ success: true, message: 'Notification deleted.', unreadCount });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete notification.' });
@@ -3033,7 +3558,12 @@ app.get('/api/search', async (req, res) => {
     }
     const regex = new RegExp(escapeRegex(q).slice(0, 80), 'i');
     const [posts, videos, artists, courses, communities, challenges, users] = await Promise.all([
-      Post.find({ $or: [{ title: regex }, { author: regex }, { tag: regex }] }).select('-userEmail -artSvg').limit(20).lean(),
+      Post.find({
+        $and: [
+          { $or: [{ title: regex }, { author: regex }, { tag: regex }] },
+          VIDEO_POST_FILTER,
+        ],
+      }).select('-userEmail -artSvg').limit(20).lean(),
       Video.find({ $or: [{ title: regex }, { author: regex }] }).limit(20).lean(),
       Artist.find({ $or: [{ name: regex }, { bio: regex }] }).limit(20).lean(),
       Course.find({ $or: [{ title: regex }, { author: regex }] }).select('-userEmail').limit(20).lean(),
@@ -3479,7 +4009,10 @@ app.post('/api/posts/:id/comment', authenticateUser, async (req, res) => {
       author,
       avatarUrl,
       text: text.trim(),
-      createdAt: new Date()
+      createdAt: new Date(),
+      likesCount: 0,
+      likedBy: [],
+      replies: [],
     };
     post.comments.push(newComment);
     await post.save();
@@ -3555,6 +4088,77 @@ app.delete('/api/posts/:id/comments/:commentId', authenticateUser, async (req, r
     res.json({ ok: true, comments: post.comments });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete comment' });
+  }
+});
+
+function toggleCommentLike(doc, userId) {
+  if (!doc.likedBy) doc.likedBy = [];
+  const already = doc.likedBy.some((id) => String(id) === String(userId));
+  if (already) {
+    if (typeof doc.likedBy.pull === 'function') doc.likedBy.pull(userId);
+    else doc.likedBy = doc.likedBy.filter((id) => String(id) !== String(userId));
+    doc.likesCount = Math.max(0, Number(doc.likesCount || 0) - 1);
+  } else {
+    if (typeof doc.likedBy.addToSet === 'function') doc.likedBy.addToSet(userId);
+    else doc.likedBy.push(userId);
+    doc.likesCount = Number(doc.likesCount || 0) + 1;
+  }
+  return !already;
+}
+
+app.post('/api/posts/:id/comments/:commentId/like', authenticateUser, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const comment = post.comments.id(req.params.commentId) || post.comments.find((item) => String(item._id) === String(req.params.commentId));
+    if (!comment) return res.status(404).json({ error: 'Comment not found' });
+    const isLiked = toggleCommentLike(comment, req.user._id);
+    await post.save();
+    res.json({ isLiked, likesCount: comment.likesCount, comments: post.comments });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to like comment' });
+  }
+});
+
+app.post('/api/posts/:id/comments/:commentId/reply', authenticateUser, async (req, res) => {
+  try {
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) return res.status(400).json({ error: 'Text is required' });
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const comment = post.comments.id(req.params.commentId) || post.comments.find((item) => String(item._id) === String(req.params.commentId));
+    if (!comment) return res.status(404).json({ error: 'Comment not found' });
+    if (!Array.isArray(comment.replies)) comment.replies = [];
+    const reply = {
+      userId: req.user._id,
+      author: req.user.displayName || req.user.username || req.body.author || 'Anonymous',
+      avatarUrl: req.user.avatarUrl || req.body.avatarUrl || '',
+      text,
+      createdAt: new Date(),
+      likesCount: 0,
+      likedBy: [],
+    };
+    comment.replies.push(reply);
+    await post.save();
+    res.status(201).json({ ok: true, comments: post.comments });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reply' });
+  }
+});
+
+app.post('/api/posts/:id/comments/:commentId/replies/:replyId/like', authenticateUser, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const comment = post.comments.id(req.params.commentId) || post.comments.find((item) => String(item._id) === String(req.params.commentId));
+    if (!comment) return res.status(404).json({ error: 'Comment not found' });
+    const reply = (comment.replies || []).id?.(req.params.replyId) || (comment.replies || []).find((item) => String(item._id) === String(req.params.replyId));
+    if (!reply) return res.status(404).json({ error: 'Reply not found' });
+    const isLiked = toggleCommentLike(reply, req.user._id);
+    await post.save();
+    res.json({ isLiked, likesCount: reply.likesCount, comments: post.comments });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to like reply' });
   }
 });
 
@@ -4519,7 +5123,7 @@ app.get('/api/users/:id/posts', authenticateIfProvided, async (req, res) => {
       return res.json([]);
     }
     const { limit, skip } = parsePageLimit(req.query, 50, 100);
-    const posts = await Post.find(filter)
+    const posts = await Post.find({ $and: [filter, VIDEO_POST_FILTER] })
       .select('-userEmail -artSvg')
       .populate('userId', 'username displayName avatarUrl coverUrl bio')
       .sort({ createdAt: -1 })
@@ -4847,7 +5451,7 @@ app.get('/api/users/:id/stats', async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('username email followers following');
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const artworksCount = await Post.countDocuments(contentOwnedByUser(user));
+    const artworksCount = await Post.countDocuments({ $and: [contentOwnedByUser(user), VIDEO_POST_FILTER] });
     res.json({
       artworksCount,
       followersCount: user.followers.length,
@@ -5167,6 +5771,427 @@ app.post('/api/auth/logout', authenticateUser, async (req, res) => {
   }
 });
 
+// ==========================================
+// ARTUBE ADMIN STUDIO REST API ENDPOINTS
+// ==========================================
+
+const ensureDefaultAdminUser = async () => {
+  try {
+    let admin = await User.findOne({
+      $or: [
+        { role: 'admin' },
+        { email: 'admin@artube.com' },
+        { username: 'admin' }
+      ]
+    });
+    if (!admin) {
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      admin = new User({
+        username: 'admin',
+        email: 'admin@artube.com',
+        displayName: 'Artube Administrator',
+        password: hashedPassword,
+        role: 'admin',
+      });
+      await admin.save();
+      console.log('[Admin] Default administrator created: admin@artube.com / admin123');
+    } else if (admin.role !== 'admin') {
+      admin.role = 'admin';
+      await admin.save();
+    }
+    return admin;
+  } catch (err) {
+    console.warn('[Admin] Could not bootstrap admin user:', err.message);
+    return null;
+  }
+};
+
+const authenticateAdmin = (req, res, next) => {
+  authenticateUser(req, res, () => {
+    if (req.user && (req.user.role === 'admin' || req.user.email === 'admin@artube.com' || req.user.username === 'admin')) {
+      return next();
+    }
+    return res.status(403).json({ error: 'Administrator access required.' });
+  });
+};
+
+// 1. Admin Login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { emailOrUsername, password } = req.body;
+    if (!emailOrUsername || !password) {
+      return res.status(400).json({ error: 'Email/Username and password are required.' });
+    }
+
+    await ensureDefaultAdminUser();
+
+    const loginIdentifier = String(emailOrUsername).trim();
+    const user = await User.findOne({
+      $or: [
+        { email: new RegExp(`^${escapeRegex(loginIdentifier)}$`, 'i') },
+        { username: new RegExp(`^${escapeRegex(normalizeUsername(loginIdentifier))}$`, 'i') }
+      ]
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+
+    if (user.role !== 'admin' && (user.email === 'admin@artube.com' || user.username === 'admin')) {
+      user.role = 'admin';
+      await user.save();
+    }
+
+    if (user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied: account does not have admin privileges.' });
+    }
+
+    const token = createUserSessionToken(user);
+    res.json({
+      message: 'Admin login successful',
+      token,
+      user: {
+        id: user._id,
+        _id: user._id,
+        email: user.email,
+        username: user.username,
+        displayName: user.displayName || 'Artube Admin',
+        role: user.role,
+        avatarUrl: user.avatarUrl || '',
+      }
+    });
+  } catch (err) {
+    console.error('Admin login error:', err);
+    res.status(500).json({ error: 'Internal server error during admin login.' });
+  }
+});
+
+// 2. Admin Current User
+app.get('/api/admin/me', authenticateAdmin, (req, res) => {
+  res.json({
+    id: req.user._id,
+    _id: req.user._id,
+    email: req.user.email,
+    username: req.user.username,
+    displayName: req.user.displayName || 'Artube Admin',
+    role: req.user.role,
+    avatarUrl: req.user.avatarUrl || '',
+  });
+});
+
+// 3. Admin Overview Stats
+app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const [totalPosts, totalCourses, totalUsers, postStats] = await Promise.all([
+      Post.countDocuments(),
+      Course.countDocuments(),
+      User.countDocuments(),
+      Post.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalViews: { $sum: '$viewsCount' },
+            totalLikes: { $sum: '$likesCount' },
+          }
+        }
+      ]),
+    ]);
+
+    const views = postStats[0]?.totalViews || 0;
+    const likes = postStats[0]?.totalLikes || 0;
+
+    res.json({
+      totalPosts,
+      totalCourses,
+      totalUsers,
+      totalViews: views,
+      totalLikes: likes,
+    });
+  } catch (err) {
+    console.error('Admin stats error:', err);
+    res.status(500).json({ error: 'Failed to calculate statistics.' });
+  }
+});
+
+// 4. Admin Dedicated Image Upload (Instant preview)
+app.post('/api/admin/upload-image', authenticateAdmin, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded.' });
+    }
+    const uploadedUrl = await uploadToCloudinary(req.file);
+    const publicUrl = makeMediaUrlPublic(req, uploadedUrl);
+    res.json({ url: publicUrl, filename: req.file.filename });
+  } catch (err) {
+    console.error('Admin upload error:', err);
+    res.status(500).json({ error: 'Failed to upload image.' });
+  }
+});
+
+// 5. Admin Posts CRUD (Bypasses ownership filters so admin can manage all cards)
+app.get('/api/admin/posts', authenticateAdmin, async (req, res) => {
+  try {
+    const filter = {};
+    const { q, category, visibility, sort, limit = 100, page = 1 } = req.query;
+
+    if (q && q.trim()) {
+      const regex = new RegExp(escapeRegex(q.trim()), 'i');
+      filter.$or = [{ title: regex }, { author: regex }, { tag: regex }];
+    }
+    if (category && category !== 'all') {
+      filter.category = new RegExp(`^${escapeRegex(category)}$`, 'i');
+    }
+    if (visibility && visibility !== 'all') {
+      filter.visibility = visibility;
+    }
+
+    let sortObj = { createdAt: -1 };
+    if (sort === 'views') sortObj = { viewsCount: -1, createdAt: -1 };
+    else if (sort === 'likes') sortObj = { likesCount: -1, createdAt: -1 };
+    else if (sort === 'title') sortObj = { title: 1 };
+
+    const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
+    const [posts, total] = await Promise.all([
+      Post.find(filter)
+        .sort(sortObj)
+        .skip(skip)
+        .limit(parseInt(limit, 10))
+        .populate('userId', 'displayName username avatarUrl')
+        .lean(),
+      Post.countDocuments(filter),
+    ]);
+
+    const formattedPosts = posts.map((p) => {
+      const safeThumb = p.thumbnailUrl || p.image || p.mediaUrl || '';
+      return {
+        ...p,
+        id: p._id,
+        image: makeMediaUrlPublic(req, safeThumb),
+        thumbnailUrl: makeMediaUrlPublic(req, safeThumb),
+        mediaUrl: makeMediaUrlPublic(req, p.mediaUrl || ''),
+        isBold: Boolean(p.isBold || p.titleWeight === 'bold' || p.titleWeight === '700' || p.titleWeight === '800'),
+        titleWeight: p.titleWeight || '600',
+      };
+    });
+
+    res.json({
+      posts: formattedPosts,
+      total,
+      page: parseInt(page, 10),
+      totalPages: Math.ceil(total / parseInt(limit, 10)),
+    });
+  } catch (err) {
+    console.error('Admin get posts error:', err);
+    res.status(500).json({ error: 'Failed to retrieve posts.' });
+  }
+});
+
+// Admin Create Post
+app.post(
+  '/api/admin/posts',
+  authenticateAdmin,
+  upload.fields([
+    { name: 'file', maxCount: 5 },
+    { name: 'thumbnailFile', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const data = {
+        ...req.body,
+        userId: req.user._id,
+        userEmail: req.user.email,
+        author: req.body.author || req.user.displayName || req.user.username || 'Artube Artist',
+        visibility: req.body.visibility || 'public',
+        isBold: req.body.isBold === true || req.body.isBold === 'true',
+        titleWeight: req.body.titleWeight || (req.body.isBold === 'true' || req.body.isBold === true ? '700' : '600'),
+      };
+
+      if (req.files) {
+        if (req.files['thumbnailFile'] && req.files['thumbnailFile'][0]) {
+          const tUrl = await uploadToCloudinary(req.files['thumbnailFile'][0]);
+          data.thumbnailUrl = makeMediaUrlPublic(req, tUrl);
+          data.image = data.thumbnailUrl;
+        }
+        if (req.files['file'] && req.files['file'][0]) {
+          const f = req.files['file'][0];
+          if (isVideoFile(f)) {
+            const bRes = await uploadVideoToBunnyStream(f, data.title || f.originalname);
+            data.mediaUrl = bRes.mediaUrl;
+            data.hlsUrl = bRes.hlsUrl;
+            data.mp4Url = bRes.mp4Url;
+            data.bunnyVideoId = bRes.guid;
+            data.mediaType = 'video';
+            if (!data.thumbnailUrl) {
+              data.thumbnailUrl = bRes.thumbnailUrl;
+              data.image = bRes.thumbnailUrl;
+            }
+          } else {
+            return res.status(400).json({ error: 'Artube only accepts videos. Use thumbnailFile for the cover image.' });
+          }
+        }
+      }
+
+      if (data.thumbnailUrl && !data.image) data.image = data.thumbnailUrl;
+      if (data.image && !data.thumbnailUrl) data.thumbnailUrl = data.image;
+
+      const post = new Post(data);
+      await post.save();
+      res.status(201).json(post);
+    } catch (err) {
+      console.error('Admin create post error:', err);
+      res.status(500).json({ error: err.message || 'Failed to create post.' });
+    }
+  }
+);
+
+// Admin Update Post
+app.put(
+  '/api/admin/posts/:id',
+  authenticateAdmin,
+  upload.fields([
+    { name: 'file', maxCount: 5 },
+    { name: 'thumbnailFile', maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const existing = await Post.findById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Post not found.' });
+
+      const data = { ...req.body };
+      delete data.userId;
+      delete data.userEmail;
+
+      if (data.isBold !== undefined) {
+        data.isBold = data.isBold === true || data.isBold === 'true';
+      }
+      if (data.titleWeight) {
+        data.titleWeight = String(data.titleWeight);
+      }
+
+      if (req.files) {
+        if (req.files['thumbnailFile'] && req.files['thumbnailFile'][0]) {
+          const tUrl = await uploadToCloudinary(req.files['thumbnailFile'][0]);
+          data.thumbnailUrl = makeMediaUrlPublic(req, tUrl);
+          data.image = data.thumbnailUrl;
+        }
+        if (req.files['file'] && req.files['file'][0]) {
+          const f = req.files['file'][0];
+          if (isVideoFile(f)) {
+            const bRes = await uploadVideoToBunnyStream(f, data.title || f.originalname);
+            data.mediaUrl = bRes.mediaUrl;
+            data.hlsUrl = bRes.hlsUrl;
+            data.mp4Url = bRes.mp4Url;
+            data.bunnyVideoId = bRes.guid;
+            data.mediaType = 'video';
+            if (!data.thumbnailUrl) {
+              data.thumbnailUrl = bRes.thumbnailUrl;
+              data.image = bRes.thumbnailUrl;
+            }
+          } else {
+            return res.status(400).json({ error: 'Artube only accepts videos. Use thumbnailFile for the cover image.' });
+          }
+        }
+      }
+
+      if (data.thumbnailUrl && !data.image) data.image = data.thumbnailUrl;
+      if (data.image && !data.thumbnailUrl) data.thumbnailUrl = data.image;
+
+      const updated = await Post.findByIdAndUpdate(req.params.id, data, { new: true });
+      res.json(updated);
+    } catch (err) {
+      console.error('Admin update post error:', err);
+      res.status(500).json({ error: err.message || 'Failed to update post.' });
+    }
+  }
+);
+
+// Admin Delete Post
+app.delete('/api/admin/posts/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    await post.deleteOne();
+    res.json({ success: true, message: 'Post deleted successfully.' });
+  } catch (err) {
+    console.error('Admin delete post error:', err);
+    res.status(500).json({ error: 'Failed to delete post.' });
+  }
+});
+
+// Admin Users List
+app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
+  try {
+    const users = await User.find().select('-password').sort({ createdAt: -1 }).limit(100).lean();
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve users.' });
+  }
+});
+
+// ==========================================
+// APP BRANDING & LOGO SETTINGS ENDPOINTS
+// ==========================================
+
+// Public GET endpoint for mobile app and web frontend
+app.get('/api/app-config', async (req, res) => {
+  try {
+    let config = await AppConfig.findOne({ key: 'main' }).lean();
+    if (!config) {
+      config = await AppConfig.create({
+        key: 'main',
+        logoType: 'text',
+        logoText: 'Artube',
+        logoPrefix: 'Art',
+        logoSuffix: 'ube',
+        logoPrefixColor: '#B31E1B',
+        logoSuffixColor: '#101828',
+        logoImageUrl: '',
+        appName: 'Artube',
+      });
+      config = config.toObject ? config.toObject() : { ...config };
+    }
+    if (config.logoImageUrl) {
+      config.logoImageUrl = makeMediaUrlPublic(req, config.logoImageUrl);
+    }
+    res.json(config);
+  } catch (err) {
+    console.error('Failed to get app config:', err);
+    res.status(500).json({ error: 'Failed to get app config' });
+  }
+});
+
+// Admin PUT endpoint to update app logo & branding (supports text changes or logo image upload)
+app.put('/api/admin/app-config', authenticateAdmin, upload.single('logoImage'), async (req, res) => {
+  try {
+    const updateData = { ...req.body };
+    if (req.file) {
+      const uploadedUrl = await uploadToCloudinary(req.file);
+      updateData.logoImageUrl = makeMediaUrlPublic(req, uploadedUrl);
+      updateData.logoType = 'image';
+    }
+    updateData.updatedAt = new Date();
+
+    const updated = await AppConfig.findOneAndUpdate(
+      { key: 'main' },
+      { $set: updateData },
+      { new: true, upsert: true }
+    );
+    const result = updated.toObject ? updated.toObject() : { ...updated };
+    if (result.logoImageUrl) {
+      result.logoImageUrl = makeMediaUrlPublic(req, result.logoImageUrl);
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('Failed to update app config:', err);
+    res.status(500).json({ error: err.message || 'Failed to update app config' });
+  }
+});
+
 app.use((err, req, res, next) => {
   if (err && (err.code === 'LIMIT_FILE_SIZE' || err.name === 'MulterError')) {
     const tooLarge = err.code === 'LIMIT_FILE_SIZE';
@@ -5186,7 +6211,7 @@ if (require.main === module) {
   });
 }
 
-app.locals.models = { User, Post, RadioChannel, Course, Community, Challenge, Notification };
+app.locals.models = { User, Post, RadioChannel, Course, Community, Challenge, Notification, UploadSession, AppConfig };
 app.locals.createUserSessionToken = createUserSessionToken;
 app.locals.radioIndexesReady = radioIndexesReady;
 app.locals.firebaseAdminConfigured = Boolean(firebaseAdmin);

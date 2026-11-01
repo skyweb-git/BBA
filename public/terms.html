@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terms and Conditions - Artube</title>
+  <meta name="description" content="Official Terms and Conditions of Use for the Artube mobile application (com.artube.app) by ArtArtist and SkyWeb.">
+  <meta name="robots" content="index, follow">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #B31E1B;
+      --primary-dark: #801814;
+      --primary-light: #FDE8E8;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --bg-page: #F8FAFC;
+      --bg-card: #FFFFFF;
+      --border-color: #E2E8F0;
+      --success: #16A34A;
+      --success-bg: #DCFCE7;
+      --info-bg: #EFF6FF;
+      --info-border: #BFDBFE;
+      --info-text: #1E40AF;
+      --radius: 12px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+      --container-max: 920px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.7;
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navigation Bar */
+    header.site-header {
+      background: #FFFFFF;
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .header-container {
+      max-width: var(--container-max);
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .brand-logo-img {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    .brand-fallback-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+    }
+
+    .brand-name {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #0F172A;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .nav-link {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    .nav-link:hover {
+      background: #F1F5F9;
+      color: var(--text-main);
+    }
+
+    .nav-link.active {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+    }
+
+    /* Hero Banner */
+    .hero-banner {
+      background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+      border-bottom: 1px solid var(--border-color);
+      padding: 48px 20px 36px;
+      text-align: center;
+    }
+
+    .hero-inner {
+      max-width: var(--container-max);
+      margin: 0 auto;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--info-bg);
+      color: var(--info-text);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+
+    .badge-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--primary);
+    }
+
+    h1.page-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 34px;
+      font-weight: 700;
+      color: #0F172A;
+      line-height: 1.25;
+      margin-bottom: 12px;
+    }
+
+    .hero-meta {
+      font-size: 14px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* Main Container */
+    .content-wrapper {
+      max-width: var(--container-max);
+      margin: 36px auto 60px;
+      padding: 0 20px;
+    }
+
+    /* Application Identification Card */
+    .app-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 32px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .app-card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--primary-dark);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .app-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      font-size: 14px;
+    }
+
+    .app-card-item {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .app-card-label {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .app-card-val {
+      color: #0F172A;
+      font-weight: 600;
+      word-break: break-word;
+    }
+
+    .app-card-val a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .app-card-val a:hover {
+      text-decoration: underline;
+    }
+
+    /* Table of contents */
+    .toc-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 32px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .toc-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-bottom: 12px;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .toc-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px 16px;
+      font-size: 14px;
+    }
+
+    .toc-list a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.15s ease;
+    }
+
+    .toc-list a:hover {
+      color: var(--primary-dark);
+      text-decoration: underline;
+    }
+
+    /* Content Card */
+    .policy-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 36px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Headings & Text */
+    h2.section-heading {
+      font-family: 'Outfit', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-top: 36px;
+      margin-bottom: 14px;
+      padding-top: 24px;
+      border-top: 1px solid #F1F5F9;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    h2.section-heading:first-of-type {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+    }
+
+    .section-num {
+      color: var(--primary);
+      font-size: 18px;
+    }
+
+    h3.sub-heading {
+      font-family: 'Outfit', sans-serif;
+      font-size: 17px;
+      font-weight: 600;
+      color: #1E293B;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin-bottom: 16px;
+      color: #334155;
+    }
+
+    ul, ol {
+      margin-bottom: 18px;
+      padding-left: 24px;
+      color: #334155;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    li strong {
+      color: #0F172A;
+    }
+
+    .callout {
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin: 20px 0;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .callout-info {
+      background: var(--info-bg);
+      border-left: 4px solid var(--primary);
+      color: #1E3A8A;
+    }
+
+    .callout-warning {
+      background: #FEF2F2;
+      border-left: 4px solid var(--primary);
+      color: #991B1B;
+    }
+
+    /* Footer */
+    footer.site-footer {
+      background: #FFFFFF;
+      border-top: 1px solid var(--border-color);
+      padding: 40px 20px;
+      margin-top: 60px;
+    }
+
+    .footer-container {
+      max-width: var(--container-max);
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 16px;
+    }
+
+    .footer-logos {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .footer-logos img {
+      height: 28px;
+      width: auto;
+      object-fit: contain;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .footer-links a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+
+    .footer-copy {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    @media print {
+      header.site-header, .toc-card, footer.site-footer, .nav-links {
+        display: none !important;
+      }
+      body {
+        background: white;
+        color: black;
+      }
+      .policy-card, .app-card {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .header-container {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .nav-links {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .policy-card {
+        padding: 22px 18px;
+      }
+      h1.page-title {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="site-header">
+    <div class="header-container">
+      <a href="terms-conditions.html" class="brand" aria-label="Artube Home">
+        <img src="artube-logo.png" alt="Artube Logo" class="brand-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div class="brand-fallback-icon" style="display:none;">A</div>
+        <span class="brand-name">Artube</span>
+      </a>
+      <nav class="nav-links" aria-label="Policy Navigation">
+        <a href="privacy-policy.html" class="nav-link">Privacy Policy</a>
+        <a href="terms-conditions.html" class="nav-link active">Terms &amp; Conditions</a>
+        <a href="delete-account.html" class="nav-link">Account Deletion</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Banner -->
+  <section class="hero-banner">
+    <div class="hero-inner">
+      <div class="badge-pill">
+        <span class="badge-dot"></span>
+        Legal Agreement · Terms of Service
+      </div>
+      <h1 class="page-title">Terms and Conditions of Use</h1>
+      <div class="hero-meta">
+        <span><strong>Effective Date:</strong> October 21, 2026</span>
+        <span>•</span>
+        <span><strong>Last Updated:</strong> October 25, 2026</span>
+        <span>•</span>
+        <span><strong>App Version:</strong> 1.0.1</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Content Container -->
+  <main class="content-wrapper">
+
+    <!-- App Identification Metadata Box -->
+    <div class="app-card">
+      <div class="app-card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        Contract &amp; Publisher Details
+      </div>
+      <div class="app-card-grid">
+        <div class="app-card-item">
+          <div class="app-card-label">Application Name</div>
+          <div class="app-card-val">Artube</div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Android Package ID</div>
+          <div class="app-card-val"><code>com.artube.app</code></div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Contracting Entity</div>
+          <div class="app-card-val">ArtArtist</div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Development Team</div>
+          <div class="app-card-val">SkyWeb IT Solutions</div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Contact &amp; Legal Notices</div>
+          <div class="app-card-val"><a href="mailto:support@artube.app">support@artube.app</a></div>
+        </div>
+        <div class="app-card-item">
+          <div class="app-card-label">Official URL</div>
+          <div class="app-card-val"><a href="https://artube.artartist.in" target="_blank" rel="noopener">https://artube.artartist.in</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table of Contents -->
+    <div class="toc-card">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#section-1">1. Acceptance of These Terms</a></li>
+        <li><a href="#section-2">2. Eligibility &amp; Age Requirements</a></li>
+        <li><a href="#section-3">3. Account Registration &amp; Security</a></li>
+        <li><a href="#section-4">4. Ownership &amp; Intellectual Property</a></li>
+        <li><a href="#section-5">5. Prohibited Conduct &amp; Safety</a></li>
+        <li><a href="#section-6">6. Artwave Live &amp; Voice Features</a></li>
+        <li><a href="#section-7">7. Courses, Monetization &amp; Payouts</a></li>
+        <li><a href="#section-8">8. Moderation &amp; Reporting Tools</a></li>
+        <li><a href="#section-9">9. Account Termination &amp; Deletion</a></li>
+        <li><a href="#section-10">10. Disclaimers &amp; &ldquo;As Is&rdquo; Service</a></li>
+        <li><a href="#section-11">11. Limitation of Liability</a></li>
+        <li><a href="#section-12">12. Changes &amp; Governing Law</a></li>
+      </ul>
+    </div>
+
+    <!-- Legal Article -->
+    <article class="policy-card">
+
+      <!-- Section 1 -->
+      <h2 id="section-1" class="section-heading">
+        <span class="section-num">1.</span> Acceptance of These Terms
+      </h2>
+      <p>
+        These Terms and Conditions (&ldquo;Terms&rdquo;) constitute a legally binding agreement between you (&ldquo;User&rdquo;, &ldquo;you&rdquo;) and <strong>ArtArtist</strong> (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;), concerning your access to and use of the <strong>Artube</strong> mobile application (Android Package: <strong><code>com.artube.app</code></strong>), our website at <code>https://artube.artartist.in</code>, and related streaming and community services (collectively, the &ldquo;Service&rdquo;). Artube is engineered by the <strong>SkyWeb</strong> tech team on behalf of ArtArtist.
+      </p>
+      <p>
+        By downloading, installing, registering for, or using Artube, you acknowledge that you have read, understood, and agreed to be bound by these Terms and our <a href="privacy-policy.html">Privacy Policy</a>. If you do not agree with any part of these Terms, you must discontinue use and uninstall the App immediately.
+      </p>
+
+      <!-- Section 2 -->
+      <h2 id="section-2" class="section-heading">
+        <span class="section-num">2.</span> Eligibility &amp; Age Requirements
+      </h2>
+      <p>
+        You must be at least <strong>13 years of age</strong> to create an account on Artube. If you are between the ages of 13 and 17, you represent that you have received permission from your parent or legal guardian to use the App, and that they agree to these Terms on your behalf.
+      </p>
+      <p>
+        <strong>Mature Artistic Content (18+):</strong> Artube is a platform celebrating artistic expression, which may include nude figure drawing, anatomical studies, or mature artistic themes. These works are restricted behind an 18+ toggle. You may only activate 18+ content settings if you are at least 18 years of age.
+      </p>
+
+      <!-- Section 3 -->
+      <h2 id="section-3" class="section-heading">
+        <span class="section-num">3.</span> Account Registration &amp; Security
+      </h2>
+      <ul>
+        <li><strong>Account Integrity:</strong> You agree to provide accurate, current, and complete information during registration. You may not impersonate any person or entity.</li>
+        <li><strong>Credential Security:</strong> You are responsible for maintaining the confidentiality of your login credentials (password, Google OAuth tokens) and for all activities that take place under your account.</li>
+        <li><strong>Notice of Unauthorized Access:</strong> You must immediately notify Artube support at <a href="mailto:support@artube.app">support@artube.app</a> if you discover or suspect any security breach or unauthorized access to your account.</li>
+      </ul>
+
+      <!-- Section 4 -->
+      <h2 id="section-4" class="section-heading">
+        <span class="section-num">4.</span> Ownership &amp; Intellectual Property
+      </h2>
+      <h3 class="sub-heading">A. You Retain Your Copyright</h3>
+      <p>
+        We strongly believe in artists' rights. <strong>You retain 100% full copyright ownership</strong> of the original artworks, illustrations, animations, videos, audio tracks, and course materials you upload to Artube (&ldquo;User Content&rdquo;).
+      </p>
+      <h3 class="sub-heading">B. License Granted to Artube</h3>
+      <p>
+        By publishing User Content on Artube, you grant ArtArtist a worldwide, non-exclusive, royalty-free license to host, transcode, cache, stream, and display that content exclusively for the purpose of operating and rendering the Artube service to you and other users according to your privacy settings.
+      </p>
+      <h3 class="sub-heading">C. Content Representations &amp; DMCA</h3>
+      <p>
+        You represent that you own or have obtained all necessary licenses, rights, and permissions for any content you publish. You must not upload copyrighted illustrations, music, or videos owned by third parties without permission. We respond promptly to valid notices of alleged copyright infringement under the Digital Millennium Copyright Act (DMCA). DMCA notices may be filed at <a href="mailto:support@artube.app">support@artube.app</a>.
+      </p>
+
+      <!-- Section 5 -->
+      <h2 id="section-5" class="section-heading">
+        <span class="section-num">5.</span> Prohibited Conduct &amp; Community Rules
+      </h2>
+      <p>To foster an inclusive, safe, and respectful environment for creators, you agree that you will NOT:</p>
+      <ul>
+        <li>Upload, stream, or transmit any child sexual abuse material (CSAM) or any sexually exploitative material involving minors. Such violations will result in immediate termination, IP banning, and reporting to the National Center for Missing &amp; Exploited Children (NCMEC) and law enforcement authorities.</li>
+        <li>Harass, intimidate, stalk, bully, or dox any artist or user.</li>
+        <li>Post content that incites violence, promotes hate speech against protected classes, or encourages self-harm.</li>
+        <li>Upload malware, viruses, or malicious scripts.</li>
+        <li>Scrape, crawl, or harvest user data or artist artwork via automated scripts or bots.</li>
+        <li>Attempt to reverse-engineer, decompile, or tamper with the Artube mobile client or backend APIs.</li>
+      </ul>
+
+      <!-- Section 6 -->
+      <h2 id="section-6" class="section-heading">
+        <span class="section-num">6.</span> Artwave Live &amp; Voice Features
+      </h2>
+      <p>
+        Artube features <strong>Artwave Live</strong>, allowing artists to broadcast live audio sessions to community listeners using real-time WebRTC technology:
+      </p>
+      <ul>
+        <li>Microphone access is enabled only with explicit user permission and only when you actively trigger a broadcast or voice search.</li>
+        <li>Hosts and participants of live sessions must adhere to community conduct guidelines during live broadcasts. Hate speech, harassment, and piracy during live radio streams are strictly prohibited.</li>
+      </ul>
+
+      <!-- Section 7 -->
+      <h2 id="section-7" class="section-heading">
+        <span class="section-num">7.</span> Courses, Monetization &amp; Payouts
+      </h2>
+      <p>
+        Artube offers educational course enrolments, creator tools, tips, and payouts:
+      </p>
+      <ul>
+        <li><strong>Creator Tools:</strong> Artists creating courses or offering monetized content are responsible for ensuring the accuracy and educational value of their material.</li>
+        <li><strong>Payout Connections:</strong> If you connect a payout method (such as PayPal or bank account), you are responsible for maintaining valid payment credentials and fulfilling any applicable local tax obligations.</li>
+        <li><strong>Third-Party Processors:</strong> Transactions are handled by third-party payment gateways. ArtArtist does not act as a bank or custodial depository.</li>
+      </ul>
+
+      <!-- Section 8 -->
+      <h2 id="section-8" class="section-heading">
+        <span class="section-num">8.</span> Moderation &amp; Reporting Tools
+      </h2>
+      <p>
+        Artube provides user tools to maintain safety, including:
+      </p>
+      <ul>
+        <li><strong>In-App Content Reporting:</strong> Any post, comment, or live stream can be flagged using the report button. Our moderation team reviews reported violations.</li>
+        <li><strong>Account Blocking:</strong> You can block any account to immediately hide their posts, comments, and profile from your feed.</li>
+        <li><strong>Custom Word Filters:</strong> You can filter out specific words from appearing in your interactions.</li>
+      </ul>
+
+      <!-- Section 9 -->
+      <h2 id="section-9" class="section-heading">
+        <span class="section-num">9.</span> Account Termination &amp; Deletion
+      </h2>
+      <p>
+        <strong>By You:</strong> You may terminate these Terms at any time by deleting your account inside the app via <strong>Settings &rarr; Account &rarr; Delete Account</strong>, or by visiting our <a href="delete-account.html">Account Deletion Page</a>. Upon deletion, your profile and content are permanently purged.
+      </p>
+      <p>
+        <strong>By Us:</strong> We reserve the right to suspend or terminate accounts that breach these Terms, violate copyright, engage in fraudulent behavior, or pose safety hazards to our community.
+      </p>
+
+      <!-- Section 10 -->
+      <h2 id="section-10" class="section-heading">
+        <span class="section-num">10.</span> Disclaimers &amp; &ldquo;As Is&rdquo; Service
+      </h2>
+      <div class="callout callout-warning">
+        <p style="margin-bottom:0;">
+          The Artube app, website, and all content and services are provided on an <strong>&ldquo;AS IS&rdquo;</strong> and <strong>&ldquo;AS AVAILABLE&rdquo;</strong> basis without warranties of any kind, either express or implied, including but not limited to merchantability, fitness for a particular purpose, non-infringement, or uninterrupted availability.
+        </p>
+      </div>
+
+      <!-- Section 11 -->
+      <h2 id="section-11" class="section-heading">
+        <span class="section-num">11.</span> Limitation of Liability
+      </h2>
+      <p>
+        To the maximum extent permitted by applicable law, ArtArtist, SkyWeb IT Solutions, and their respective directors, officers, employees, and agents shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, loss of data, goodwill, or artistic works, arising out of or related to your use of or inability to use Artube.
+      </p>
+
+      <!-- Section 12 -->
+      <h2 id="section-12" class="section-heading">
+        <span class="section-num">12.</span> Changes &amp; Governing Law
+      </h2>
+      <p>
+        We may modify these Terms periodically. We will provide notice of significant revisions by updating the &ldquo;Last Updated&rdquo; date at the top of this document or via in-app notification. Your continued use of the App following changes constitutes your agreement to the modified Terms.
+      </p>
+      <p>
+        These Terms shall be governed by and interpreted in accordance with applicable governing laws. If you have any inquiries regarding these Terms, contact our legal and support team at <a href="mailto:support@artube.app">support@artube.app</a>.
+      </p>
+
+    </article>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-logos">
+        <img src="artartist-logo.png" alt="ArtArtist Logo" onerror="this.style.display='none';">
+        <img src="skyweb-logo.png" alt="SkyWeb Logo" onerror="this.style.display='none';">
+      </div>
+      <div class="footer-links">
+        <a href="privacy-policy.html">Privacy Policy</a>
+        <span>•</span>
+        <a href="terms-conditions.html">Terms &amp; Conditions</a>
+        <span>•</span>
+        <a href="delete-account.html">Account &amp; Data Deletion</a>
+      </div>
+      <p class="footer-copy">
+        &copy; 2026 ArtArtist. Developed by SkyWeb. All rights reserved.<br>
+        Artube (Package: <code>com.artube.app</code>) · Hosted publicly with SSL encryption.
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>
