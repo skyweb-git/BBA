@@ -2294,11 +2294,19 @@ const VIDEO_POST_FILTER = {
   ],
 };
 
-async function ingestUploadedVideos(req, data, { allowMultiple = false } = {}) {
+const MAX_COURSE_LESSON_VIDEOS = 3;
+
+async function ingestUploadedVideos(req, data, { allowMultiple = false, maxVideos = allowMultiple ? MAX_COURSE_LESSON_VIDEOS : 1 } = {}) {
   const videoLessons = [];
   const uploadedFiles = req.files?.file || [];
   for (const file of uploadedFiles) {
     if (!file?.size || !isVideoFile(file)) continue;
+    if (file.size > MAX_VIDEO_UPLOAD_BYTES) {
+      const err = new Error(`${file.originalname || 'Video'} exceeds the 500 MB limit.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    if (videoLessons.length >= maxVideos) break;
     const bRes = await uploadVideoToBunnyStream(file, data.title || file.originalname);
     videoLessons.push({
       id: String(videoLessons.length + 1),
@@ -2683,11 +2691,11 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
 
   // POST create item — authentication required
   const middleware = hasUpload ? upload.fields([
-    { name: 'file', maxCount: 21 },
+    { name: 'file', maxCount: Model.modelName === 'Course' ? MAX_COURSE_LESSON_VIDEOS : 1 },
     { name: 'extraFile', maxCount: 1 },
     { name: 'thumbnailFile', maxCount: 1 },
     { name: 'trailerFile', maxCount: 1 },
-    { name: 'lessonVideos', maxCount: 30 }
+    { name: 'lessonVideos', maxCount: MAX_COURSE_LESSON_VIDEOS }
   ]) : (req, res, next) => next();
   app.post(routePath, authenticateUser, middleware, async (req, res) => {
     try {
@@ -2736,8 +2744,23 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       // Videos + optional thumbnail only. Extra image files are ignored.
       if (req.files) {
         if (req.files['file'] && req.files['file'].length > 0) {
+          if (Model.modelName === 'Course') {
+            const courseVideos = req.files['file'].filter((f) => f?.size && isVideoFile(f));
+            if (courseVideos.length > MAX_COURSE_LESSON_VIDEOS) {
+              return res.status(400).json({
+                error: `Courses can include up to ${MAX_COURSE_LESSON_VIDEOS} videos (500 MB each).`,
+              });
+            }
+            const oversized = courseVideos.find((f) => f.size > MAX_VIDEO_UPLOAD_BYTES);
+            if (oversized) {
+              return res.status(400).json({
+                error: `${oversized.originalname || 'Video'} exceeds the 500 MB limit.`,
+              });
+            }
+          }
           const videoLessons = await ingestUploadedVideos(req, data, {
             allowMultiple: Model.modelName === 'Course',
+            maxVideos: Model.modelName === 'Course' ? MAX_COURSE_LESSON_VIDEOS : 1,
           });
           if ((Model.modelName === 'Post' || Model.modelName === 'Course') && videoLessons.length === 0) {
             return res.status(400).json({ error: 'Artube only accepts videos. Add a video (thumbnails are separate).' });
@@ -2809,11 +2832,16 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         }
       }
 
-      // Assign uploaded lesson videos to lessons array
+      // Assign uploaded lesson videos to lessons array (max 3, 500 MB each)
       if (req.files && req.files['lessonVideos'] && req.files['lessonVideos'].length > 0) {
         const uploadedLessonUrls = [];
-        for (const lFile of req.files['lessonVideos']) {
+        for (const lFile of req.files['lessonVideos'].slice(0, MAX_COURSE_LESSON_VIDEOS)) {
           if (lFile.size > 0) {
+            if (lFile.size > MAX_VIDEO_UPLOAD_BYTES) {
+              return res.status(400).json({
+                error: `${lFile.originalname || 'Video'} exceeds the 500 MB limit.`,
+              });
+            }
             if (isVideoFile(lFile)) {
               const bRes = await uploadVideoToBunnyStream(lFile, 'Course Lesson');
               uploadedLessonUrls.push(bRes.mediaUrl);
@@ -2875,6 +2903,11 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       res.status(201).json(item);
     } catch (err) {
       console.error(`Error saving to ${Model.modelName}:`, err);
+      if (err.statusCode === 400 || err.code === 'LIMIT_FILE_SIZE' || err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          error: err.message || `Courses can include up to ${MAX_COURSE_LESSON_VIDEOS} videos (500 MB each).`,
+        });
+      }
       res.status(500).json({ error: `Failed to create item in ${Model.modelName}` });
     }
   });
@@ -2923,8 +2956,23 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       // Videos + optional thumbnail only. Extra image files are ignored.
       if (req.files) {
         if (req.files['file'] && req.files['file'].length > 0) {
+          if (Model.modelName === 'Course') {
+            const courseVideos = req.files['file'].filter((f) => f?.size && isVideoFile(f));
+            if (courseVideos.length > MAX_COURSE_LESSON_VIDEOS) {
+              return res.status(400).json({
+                error: `Courses can include up to ${MAX_COURSE_LESSON_VIDEOS} videos (500 MB each).`,
+              });
+            }
+            const oversized = courseVideos.find((f) => f.size > MAX_VIDEO_UPLOAD_BYTES);
+            if (oversized) {
+              return res.status(400).json({
+                error: `${oversized.originalname || 'Video'} exceeds the 500 MB limit.`,
+              });
+            }
+          }
           const videoLessons = await ingestUploadedVideos(req, data, {
             allowMultiple: Model.modelName === 'Course',
+            maxVideos: Model.modelName === 'Course' ? MAX_COURSE_LESSON_VIDEOS : 1,
           });
           if ((Model.modelName === 'Post' || Model.modelName === 'Course') && videoLessons.length === 0) {
             return res.status(400).json({ error: 'Artube only accepts videos. Add a video (thumbnails are separate).' });
@@ -2994,11 +3042,16 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
         }
       }
 
-      // Assign uploaded lesson videos to lessons array
+      // Assign uploaded lesson videos to lessons array (max 3, 500 MB each)
       if (req.files && req.files['lessonVideos'] && req.files['lessonVideos'].length > 0) {
         const uploadedLessonUrls = [];
-        for (const lFile of req.files['lessonVideos']) {
+        for (const lFile of req.files['lessonVideos'].slice(0, MAX_COURSE_LESSON_VIDEOS)) {
           if (lFile.size > 0) {
+            if (lFile.size > MAX_VIDEO_UPLOAD_BYTES) {
+              return res.status(400).json({
+                error: `${lFile.originalname || 'Video'} exceeds the 500 MB limit.`,
+              });
+            }
             if (isVideoFile(lFile)) {
               const bRes = await uploadVideoToBunnyStream(lFile, 'Course Lesson');
               uploadedLessonUrls.push(bRes.mediaUrl);
@@ -3049,6 +3102,11 @@ function makeCrudEndpoints(routePath, Model, hasUpload = false) {
       }
       res.json(item);
     } catch (err) {
+      if (err.statusCode === 400 || err.code === 'LIMIT_FILE_SIZE' || err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          error: err.message || `Courses can include up to ${MAX_COURSE_LESSON_VIDEOS} videos (500 MB each).`,
+        });
+      }
       res.status(500).json({ error: `Failed to update item in ${Model.modelName}` });
     }
   });
@@ -5226,31 +5284,25 @@ app.post('/api/users/:id/follow', authenticateUser, async (req, res) => {
   try {
     const { creatorName } = req.body;
     const followerUser = req.user;
+    const paramId = String(req.params.id || '').trim();
+    const isObjectId = /^[a-f\d]{24}$/i.test(paramId);
 
-    const rawTarget = (creatorName || req.params.id || '').trim();
-    const searchTarget = rawTarget.replace(/^@/, '');
-
-    // Gate: Check if user is trying to follow themselves
-    if (
-      (followerUser._id && req.params.id && followerUser._id.toString() === req.params.id) ||
-      (followerUser.username && searchTarget && followerUser.username.toLowerCase() === normalizeUsername(searchTarget))
-    ) {
-      return res.status(400).json({ error: 'Cannot follow yourself' });
-    }
-
+    // Prefer ObjectId from the URL. creatorName is only a fallback lookup key
+    // (clients often send the *viewer* display name, which must not trigger self-follow).
     let targetUser = null;
-    if (req.params.id && req.params.id !== 'by-name' && /^[a-f\d]{24}$/i.test(req.params.id)) {
-      targetUser = await User.findById(req.params.id);
+    if (isObjectId && paramId !== 'by-name') {
+      targetUser = await User.findById(paramId);
     }
-    if (!targetUser && searchTarget) {
-      const username = normalizeUsername(searchTarget);
+    if (!targetUser) {
+      const nameKey = String(creatorName || (!isObjectId ? paramId : '') || '').trim().replace(/^@/, '');
+      const username = normalizeUsername(nameKey);
       if (username) {
         targetUser = await User.findOne({ username: new RegExp(`^${escapeRegex(username)}$`, 'i') });
       }
     }
 
     if (!targetUser) {
-      return res.json({ isFollowing: true, followersCount: 1, followingCount: 0 });
+      return res.status(404).json({ error: 'User not found' });
     }
 
     if (followerUser._id.toString() === targetUser._id.toString()) {
